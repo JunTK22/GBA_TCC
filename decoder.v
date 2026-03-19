@@ -1,11 +1,11 @@
 module decoder(
 	input	[31:0]	instruction,
-	input	[31:0]	CPSR,
+	input	[31:0]	PSR,
 	input			Rn0_Thumb,
 	input			clk,
 	input			pipeline_halt,
 	input			pipeline_rst,
-	input	[1:0]	multi_cycle,
+	input	[3:0]	multi_cycle,
 	
 	output	reg [5:0] 	Inst_decoded_o,
 	output	reg [3:0]	cond_o,
@@ -16,12 +16,12 @@ module decoder(
 	output	reg [3:0]	Rm_o,
 	output	reg [23:0]	Imm_o,
 	output	reg	[7:0]	Shift_o,
-	output	reg			CPSR_Thumb_bit = 0,
+	output	reg			PSR_Thumb_bit = 0,
 
-	output				cond_valid,
+	output	wire		cond_valid,
 
-	output				nMREQ,
-	output				SEQ,
+	output	wire		nMREQ,
+	output	wire		SEQ,
 
 	output	reg			Addr_reg_en,
 	output	reg			Addr_Incr_en,
@@ -71,6 +71,9 @@ parameter I = 2'b10;
 parameter C = 2'b11;
 
 reg [40:0] cycles_types;
+
+reg store_multicycle;
+reg [3:0]  multi_cycle_reg;
 
 reg [19:0] cycle_count = 0;
 wire special_flow;
@@ -132,9 +135,9 @@ assign reg_list_ones	=	instruct_reg[0]+instruct_reg[1]+instruct_reg[2]+instruct_
 							instruct_reg[9]+instruct_reg[10]+instruct_reg[11]+instruct_reg[12]+instruct_reg[13]+instruct_reg[14]+instruct_reg[15];
 
 wire thumb_state;
-assign thumb_state = CPSR[5];
+assign thumb_state = PSR[5];
 
-assign cond_valid = (cond_o == CPSR[31:28] || cond_o == 4'b1110) ? 1'b1 : 1'b0;
+assign cond_valid = (cond_o == PSR[31:28] || cond_o == 4'b1110) ? 1'b1 : 1'b0;
 
 always @(instruct_reg) begin
 	// Instruction Decoding
@@ -219,6 +222,7 @@ end
 // flags [Set_condition_f, Imm_Operand_f, Acumulate_f, Mult_Long_f, Sign_f, 
 //		  Byte_Word_f, HW_Byte_f, Load_f, Pre_Pos_Indx_f, Up_Down_f, Write_Back_f]
 always @(posedge clk or posedge pipeline_rst) begin
+	Inst_exec 		 <= Inst_decoded_o;
 	if (pipeline_rst) begin
 		opcode_o			<= 0;
 		Rn_o				<= 0;
@@ -255,7 +259,6 @@ always @(posedge clk or posedge pipeline_rst) begin
 		PSR_flags_only_f	<= 0;
 	end else if (!pipeline_halt_r && !special_flow) begin
 		Inst_decoded_o 	 <= Inst_decoded;
-		Inst_exec 		 <= Inst_decoded_o;
 
 		Set_condition_f	 <= 0;
 		Imm_Operand_f	 <= 0;
@@ -289,7 +292,7 @@ always @(posedge clk or posedge pipeline_rst) begin
 		Rm_o			 <= 0;
 		Imm_o			 <= 0;
 		Shift_o			 <= 0;
-		CPSR_Thumb_bit	 <= 0;
+		PSR_Thumb_bit	 <= 0;
 
 		case (Inst_decoded)
 		// ARM Instructions
@@ -326,6 +329,7 @@ always @(posedge clk or posedge pipeline_rst) begin
 			Mult: begin
 				cycle_count		<= (instruct_reg[21] ? 3'b111 : 3'b011) << multi_cycle | ((8'b0 | 1'b1) << multi_cycle)-1'b1;
 				cycles_types	<= {(multi_cycle == 0) ? {I} : ((multi_cycle == 1) ? {I, I} : ((multi_cycle == 2) ? {I, I, I} : {I, I, I, I})) ,instruct_reg[21] ? {I, S} : {S}};
+				store_multicycle <= 1;
 				
 				Set_condition_f <= instruct_reg[20];
 				Acumulate_f		<= instruct_reg[21];
@@ -361,7 +365,7 @@ always @(posedge clk or posedge pipeline_rst) begin
 			end
 			BranchX: begin
 				cycle_count 	<= 3'b111;
-				cycles_types	<= {N, S, S};
+				cycles_types	<= {S,S,N};
 
 				Rd_o			<= instruct_reg[15:12];
 				Rn_o			<= instruct_reg[3:0];
@@ -597,13 +601,22 @@ always @(posedge clk or posedge pipeline_rst) begin
 		cycle_count 	<= cycle_count >> 1;
 		cycles_types	<= cycles_types >> 2;
 		case (Inst_exec)
+			Mult: begin
+				pipeline_halt_r	<= multi_cycle[1];
+			end
 			BranchX: begin
 				pipeline_flush	<= cycle_count[3]; // Flush pipeline on first cycle
-				CPSR_Thumb_bit	<= Rn0_Thumb;
+				PSR_Thumb_bit	<= Rn0_Thumb;
 			end
-			default: pipeline_halt_r  <= cycle_count[1];
 		endcase
 	end
+end
+
+always @(cycle_count) begin
+	case (Inst_exec)
+		BranchX: pipeline_halt_r <= 0;
+		default: pipeline_halt_r <= cycle_count[1];
+	endcase
 end
 
 endmodule
