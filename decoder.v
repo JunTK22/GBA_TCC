@@ -26,19 +26,42 @@ module decoder(
 	output	wire		SEQ,
 
 	output	reg			Wr_Data_reg_en,
-	output	reg	[1:0]	Addr_reg_sel,
-	output	reg			Addr_Incr_en,
 	output	reg			Reg_bank_en,
 	output	reg			B_shifter_en,
 	output	reg			Multiplier_en,	
-	output	reg	[1:0]	Bus_A_sel,
-	output	reg	[1:0]   Bus_B_sel,
-	output	reg	[0:16]	flags
+	output	reg			PSR_en,
+	output	reg	[1:0]	Addr_reg_sel = 0,
+	output	reg	[1:0]	Bus_A_sel = 0,
+	output	reg	[1:0]   Bus_B_sel = 0,
+
+	output reg			Set_condition_f,
+	output reg			Imm_Operand_f,
+	output reg			Acumulate_f,
+	output reg			Mult_Long_f,
+	output reg			Sign_f,
+	output reg			Byte_Word_f,
+	output reg			HW_Byte_f,
+	output reg			Load_f,
+	output reg			Pre_Pos_Indx_f,
+	output reg			Up_Down_f,
+	output reg			Write_Back_f,
+	output reg			L_PSR_UserMode_f,
+	output reg			Link_f,
+	output reg			Transf_len_f,
+	output reg			Interrupt_f,
+	output reg			PSR_sel_f,
+	output reg			PSR_flags_only_f,
+	output reg			H1_f,
+	output reg			H2_f,
+	output reg			SP_f,
+	output reg			PC_LR_f,
+	output reg			Low_High_off_f,
+	output reg			Shifter_reg_f
 	);
 
 // Address Register Input Selector Params
-parameter	ALU_bus = 0;
-parameter	PC_bus  = 1;
+parameter	PC_bus  = 0;
+parameter	ALU_bus = 1;
 parameter	Inc_bus = 2;
 
 // A Bus Input Selector Params
@@ -48,36 +71,9 @@ parameter	Multiplier  = 2;
 
 // B Bus Input Selector Params
 parameter	Rm = 0;
-//parameter	Multiplier  = 1;
-parameter	Immediate  	= 2;
-parameter	Read_data_reg = 3;
-
-// flags [Set_condition_f, Imm_Operand_f, Acumulate_f, Mult_Long_f, Sign_f, 
-//		  Byte_Word_f, HW_Byte_f, Load_f, Pre_Pos_Indx_f, Up_Down_f, Write_Back_f]
-reg			Set_condition_f;
-reg			Imm_Operand_f;
-reg			Acumulate_f;
-reg			Mult_Long_f;
-reg			Sign_f;
-reg			Byte_Word_f;
-reg			HW_Byte_f;
-reg			Load_f;
-reg			Pre_Pos_Indx_f;
-reg			Up_Down_f;
-reg			Write_Back_f;
-reg			L_PSR_UserMode_f;
-reg			Link_f;
-reg			Transf_len_f;
-reg			Interrupt_f;
-reg			PSR_s_f;
-reg			PSR_d_f;
-reg			PSR_flags_only_f;
-reg			H1_f;
-reg			H2_f;
-reg			SP_f;
-reg			PC_LR_f;
-reg			Low_High_off_f;
-reg			Shifter_reg_f;
+parameter	Immediate  	= 1;
+//parameter	Multiplier  = 2;
+parameter	Data_reg_in = 3;
 
 // Mem Cycle Types
 parameter S = 2'b00;
@@ -165,17 +161,17 @@ always @(instruct_reg) begin
 	// Instruction Decoding
 	if (thumb_state == 0) begin
 	// Modo ARM
-		if (instruct_reg[27:25] == 3'b000 && instruct_reg[7] == 1'b1 && instruct_reg[4] == 1'b1) begin
-			if (instruct_reg[24:22] == 3'b000 && instruct_reg[6:5] == 2'b00) begin 
+		if (instruct_reg[27:25] == 3'b000 && instruct_reg[4]) begin
+			if (instruct_reg[24:22] == 3'b000 && instruct_reg[7] && instruct_reg[6:5] == 2'b00) begin 
 				// Multiply e Multiply-Acumulate
 				Inst_decoded = Mult;
-			end else if(instruct_reg[24:23] == 2'b01 && instruct_reg[6:5] == 2'b00) begin
+			end else if(instruct_reg[24:23] == 2'b01 && instruct_reg[7] && instruct_reg[6:5] == 2'b00) begin
 				// Multiply e Multiply-Acumulate Long
 				Inst_decoded = Mult_L;
-			end else if (instruct_reg[24:23] == 2'b10 && instruct_reg[21:20] == 2'b00 && instruct_reg[6:5] == 2'b00) begin
+			end else if (instruct_reg[24:23] == 2'b10 && instruct_reg[21:20] == 2'b00 && instruct_reg[7] && instruct_reg[6:5] == 2'b00) begin
 				// Single Data Swap
 				Inst_decoded = SD_Swap;
-			end else if (instruct_reg[24:20] == 5'b10010 && instruct_reg[6:5] == 2'b00) begin
+			end else if (instruct_reg[24:20] == 5'b10010 && !instruct_reg[7] && instruct_reg[6:5] == 2'b00) begin
 				// Brand and Exchange
 				Inst_decoded = BranchX;
 			end else begin
@@ -194,7 +190,7 @@ always @(instruct_reg) begin
 			end else begin
 				Inst_decoded = DP;
 			end
-		end else if (instruct_reg[27:25] ==3'b011 && instruct_reg[4] == 1'b1) begin
+		end else if (instruct_reg[27:25] ==3'b011 && instruct_reg[4]) begin
 			// Undefined
 			Inst_decoded = Undf;
 		end else if (instruct_reg[27:26] ==2'b01) begin
@@ -209,10 +205,10 @@ always @(instruct_reg) begin
 		end else if (instruct_reg[27:25] == 3'b110) begin
 			// Coprocessor Data Load/Store
 			Inst_decoded = Co_Data_LS;
-		end else if (instruct_reg[27:24] == 4'b1110 && instruct_reg[4] == 1'b0) begin
+		end else if (instruct_reg[27:24] == 4'b1110 && instruct_reg[4]) begin
 			// Coprocessor Data Operation
 			Inst_decoded = Co_Data_Op;
-		end else if (instruct_reg[27:24] == 4'b1110 && instruct_reg[4] == 1'b1) begin
+		end else if (instruct_reg[27:24] == 4'b1110 && instruct_reg[4]) begin
 			// Coprocessor Register Load/Store
 			Inst_decoded = Co_Reg_LS;
 		end else if(instruct_reg[27:24] == 4'b1111) begin
@@ -252,10 +248,8 @@ always @(posedge clk or posedge pipeline_rst) begin
 		Rm_o				<= 0;
 		Imm_o				<= 0;
 		Shift_o				<= 0;
-		Addr_Incr_en		<= 0;
 		Reg_bank_en			<= 0;
 		B_shifter_en		<= 0;
-		flags				<= 0;
 
 		Set_condition_f		<= 0;
 		Imm_Operand_f		<= 0;
@@ -272,8 +266,7 @@ always @(posedge clk or posedge pipeline_rst) begin
 		Link_f				<= 0;
 		Transf_len_f		<= 0;
 		Interrupt_f			<= 0;
-		PSR_s_f				<= 0;
-		PSR_d_f				<= 0;
+		PSR_sel_f			<= 0;
 		PSR_flags_only_f	<= 0;
 	end else if (!pipeline_halt_r && !special_flow[1]) begin
 		Inst_decoded_o 	 <= Inst_decoded;
@@ -293,8 +286,7 @@ always @(posedge clk or posedge pipeline_rst) begin
 		Link_f			 <= 0;
 		Transf_len_f	 <= 0;
 		Interrupt_f		 <= 0;
-		PSR_s_f			 <= 0;
-		PSR_d_f			 <= 0;
+		PSR_sel_f		 <= 0;
 		PSR_flags_only_f <= 0;
 		H1_f			 <= 0;
 		H2_f			 <= 0;
@@ -302,6 +294,16 @@ always @(posedge clk or posedge pipeline_rst) begin
 		PC_LR_f			 <= 0;
 		Low_High_off_f	 <= 0;
 		Shifter_reg_f	 <= 0;
+
+		Wr_Data_reg_en	<= 0;
+		Reg_bank_en		<= 0;
+		B_shifter_en	<= 0;
+		Multiplier_en	<= 0;
+		PSR_en			<= 0;
+
+		Addr_reg_sel <= PC_bus;
+		Bus_A_sel <= Rn;
+		Bus_B_sel <= Rm;
 
 		cond_o 			 <= thumb_state ? ((Inst_decoded == Cond_Branch) ? instruct_reg[11:8] : 0) : instruct_reg[31:28];
 		opcode_o		 <= 0;
@@ -326,6 +328,9 @@ always @(posedge clk or posedge pipeline_rst) begin
 				Imm_Operand_f	<= instruct_reg[25];
 				Shifter_reg_f	<= instruct_reg[4];
 
+				Reg_bank_en		<= 1;
+				B_shifter_en	<= 1;
+
 				opcode_o		<= instruct_reg[24:21];
 				Rn_o			<= instruct_reg[19:16];
 				Rd_o			<= instruct_reg[15:12];
@@ -334,17 +339,24 @@ always @(posedge clk or posedge pipeline_rst) begin
 				Shift_o			<= instruct_reg[25] ? instruct_reg[11:8] : instruct_reg[11:4];
 			end
 			MRS: begin
-				PSR_s_f			<= instruct_reg[22];
+				PSR_sel_f		<= instruct_reg[22];
 				
-				opcode_o		<= instruct_reg[24:21];
+				Reg_bank_en		<= 1;
+				PSR_en			<= 1;
+
+				opcode_o		<= 4'b1101;
 				Rd_o			<= instruct_reg[15:12];
 			end
 			MSR: begin
 				Imm_Operand_f	<= instruct_reg[25];
-				PSR_d_f			<= instruct_reg[22];
+				PSR_sel_f		<= instruct_reg[22];
 				PSR_flags_only_f<= instruct_reg[16];
 
-				opcode_o		<= instruct_reg[24:21];
+				Reg_bank_en		<= 1;
+				B_shifter_en	<= 1;
+				PSR_en			<= 1;
+
+				opcode_o		<= 4'b1101;
 				Rm_o			<= instruct_reg[3:0];
 				Imm_o			<= instruct_reg[7:0];
 				Shift_o			<= instruct_reg[25] ? instruct_reg[11:8] : instruct_reg[11:4];
@@ -353,16 +365,16 @@ always @(posedge clk or posedge pipeline_rst) begin
 				cycle_count		<= 2'b11;
 				cycles_types	<= I;
 				
-				opcode_o		<= 4'b1101;
+				opcode_o		<= 4'b1101; // MOV initial mult result do Rd
 				Set_condition_f <= instruct_reg[20];
 				Acumulate_f		<= instruct_reg[21];
 				set_multi_cycle	<= 1;
 
 				// Abus <= Rs_o and Bbus <= multiplier_o (Multiplier receive Rm_o directly)				
-				Bus_A_sel = Rs;
-				Bus_B_sel = Multiplier;
-				Reg_bank_en = 0; // Disables reg bank on first cycle
-				Multiplier_en = 1; // Enables Mult. reg to save Rs on first cycle
+				Bus_A_sel <= Rs;
+				Bus_B_sel <= Multiplier;
+				Reg_bank_en <= 0; // Disables reg bank on first cycle
+				Multiplier_en <= 1; // Enables Mult. reg to save Rs on first cycle
 				
 				Rd_o			<= instruct_reg[19:16];
 				Rn_o			<= instruct_reg[15:12];
@@ -373,12 +385,18 @@ always @(posedge clk or posedge pipeline_rst) begin
 				cycle_count		<= 2'b11;
 				cycles_types	<= I;
 				
-				opcode_o		<= 4'b1101;
+				opcode_o		<= 4'b1101; // MOV initial mult result do Rd
 				Set_condition_f <= instruct_reg[20];
 				Acumulate_f		<= instruct_reg[21];
 				Mult_Long_f		<= instruct_reg[23];
 				Sign_f			<= instruct_reg[22];
 				set_multi_cycle	<= 1;
+
+				// Abus <= Rs_o and Bbus <= multiplier_o (Multiplier receive Rm_o directly)				
+				Bus_A_sel <= Rs;
+				Bus_B_sel <= Multiplier;
+				Reg_bank_en <= 0; // Disables reg bank on first cycle
+				Multiplier_en <= 1; // Enables Mult. reg to save Rs on first cycle
 				
 				Rd_o			<= instruct_reg[19:16];
 				Rn_o			<= instruct_reg[15:12];
@@ -438,6 +456,7 @@ always @(posedge clk or posedge pipeline_rst) begin
 				cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 2'b11;
 				cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {S,N,I}) : {N,N};
 				
+				opcode_o		<= 4'b0100; // ADD Rn + Imm (Offset)
 				Imm_Operand_f	<= !instruct_reg[25];
 				Sign_f			<= instruct_reg[6];
 				Byte_Word_f		<= instruct_reg[22];
@@ -446,6 +465,12 @@ always @(posedge clk or posedge pipeline_rst) begin
 				Pre_Pos_Indx_f	<= instruct_reg[24];
 				Up_Down_f		<= instruct_reg[23];
 				Write_Back_f	<= instruct_reg[21];
+
+				// Add Rn + Offset into Addr register on 1st cycle
+				Addr_reg_sel <= ALU_bus;
+				Bus_A_sel <= Rn;
+				Bus_B_sel <= instruct_reg[25] ? Rm : Immediate;
+				B_shifter_en	<= 1;
 
 				Rn_o			<= instruct_reg[19:16];
 				Rd_o			<= instruct_reg[15:12];
@@ -656,12 +681,10 @@ always @(posedge clk or posedge pipeline_rst) begin
 					set_multi_cycle <= 0;
 				end
 				if (!set_multi_cycle) begin
+					Rs_o <= Rd_o;
 					opcode_o <= 4'b0100;
 				end
-				if (!set_multi_cycle) begin
-					Rs_o <= Rd_o;
-				end
-				if (cycle_count[1:0] == 2'b01 && Acumulate_f) begin
+				if (cycle_count[2:1] == 2'b01 && Acumulate_f && !set_multi_cycle) begin
 					Bus_A_sel <= Rn;
 					Bus_B_sel <= Rm;
 					Rm_o	  <= Rd_o;
@@ -671,13 +694,18 @@ always @(posedge clk or posedge pipeline_rst) begin
 				if (set_multi_cycle) begin
 					cycle_count		<= (Acumulate_f ? 3'b111 : 3'b011) << multi_cycle | ((8'b0 | 1'b1) << multi_cycle)-1'b1;
 					cycles_types	<= (multi_cycle == 0) ? (Acumulate_f ? {S,I,I} : {S,I}) : {Acumulate_f ? {S,I,I} : {S,I}, (multi_cycle == 1) ? {I} : ((multi_cycle == 2) ? {I, I} : {I, I, I})};
+					Reg_bank_en = 1;
+					Multiplier_en = 0;
 					set_multi_cycle <= 0;
 				end
 				if (!set_multi_cycle) begin
+					Rs_o <= Rd_o;
 					opcode_o <= 4'b0100;
 				end
-				if (!set_multi_cycle) begin
-					Rs_o <= Rd_o;
+				if (cycle_count[2:1] == 2'b01 && Acumulate_f && !set_multi_cycle) begin
+					Bus_A_sel <= Rn;
+					Bus_B_sel <= Rm;
+					Rm_o	  <= Rd_o;
 				end
 			end
 			BranchX: begin
@@ -703,6 +731,15 @@ always @(posedge clk or posedge pipeline_rst) begin
 				end
 			end
 			SD_LS: begin
+				if (Load_f) begin
+					opcode_o <= 1101; // Mov Rd <- Data_reg_in
+					Reg_bank_en <= 1;
+					B_shifter_en <= 0;					
+					Bus_B_sel <= Data_reg_in;
+				end else begin
+					Bus_B_sel <= Rm;
+					Wr_Data_reg_en <= 1;
+				end
 				if (Rd_o == 4'b1111 && Load_f) begin
 					pipeline_flush <= (cycle_count[4:0] == 5'b00111) ? 1 : 0;
 				end else begin
@@ -714,8 +751,8 @@ always @(posedge clk or posedge pipeline_rst) begin
 	end
 end
 
-always @(cycles_types) begin
-	pipeline_halt_r <= (cycles_types == S) ? 0 : 1;
+always @(cycle_count) begin
+	pipeline_halt_r <= cycle_count[1];
 end
 
 //always @(cycle_count or multi_cycle) begin
