@@ -24,6 +24,8 @@ add wave -radix bin         sim:/decoder/special_flow
 add wave -radix hex         sim:/decoder/cycle_count
 add wave -radix hex         sim:/decoder/cycles_types
 add wave -radix bin         sim:/decoder/pipeline_halt_r
+add wave -radix unsigned    sim:/decoder/Bus_A_sel
+add wave -radix unsigned    sim:/decoder/Bus_B_sel
 
 
 force Data_i    0 0 ns
@@ -34,7 +36,7 @@ force pipeline_halt 0 0 ns
 force pipeline_rst  0 0 ns
 force multi_cycle   0 0 ns
 
-force clk 1 0 ns, 0 5 ns -r 10 ns
+force clk 0 0 ns, 1 5 ns -r 10 ns
 
 ###############################################################################
 ## 5.  RESET SEQUENCE
