@@ -1,7 +1,7 @@
 add wave -radix hex         sim:/decoder/Data_i
 add wave -radix bin         sim:/decoder/PSR
 add wave -radix bin         sim:/decoder/Rn0_Thumb
-add wave -radix bin         sim:/decoder/clk
+add wave -radix bin         sim:/decoder/CLK
 add wave -radix bin         sim:/decoder/pipeline_halt
 add wave -radix bin         sim:/decoder/pipeline_rst
 add wave -radix hex         sim:/decoder/multi_cycle
@@ -18,25 +18,27 @@ add wave -radix hex         sim:/decoder/Imm_o
 add wave -radix hex         sim:/decoder/Shift_o
 add wave -radix bin         sim:/decoder/PSR_Thumb_bit
 add wave -radix bin         sim:/decoder/cond_valid
-add wave -radix bin         sim:/decoder/nMREQ
-add wave -radix bin         sim:/decoder/SEQ
+add wave -radix unsigned    sim:/decoder/Bus_A_sel
+add wave -radix unsigned    sim:/decoder/Bus_B_sel
+add wave -radix unsigned    sim:/decoder/Writeback_en
+add wave -radix unsigned    sim:/decoder/Reg_bank_en
+add wave -radix bin         sim:/decoder/Addr_reg_en
 add wave -radix bin         sim:/decoder/special_flow
 add wave -radix hex         sim:/decoder/cycle_count
 add wave -radix hex         sim:/decoder/cycles_types
 add wave -radix bin         sim:/decoder/pipeline_halt_r
-add wave -radix unsigned    sim:/decoder/Bus_A_sel
-add wave -radix unsigned    sim:/decoder/Bus_B_sel
-
+add wave -radix bin         sim:/decoder/nMREQ
+add wave -radix bin         sim:/decoder/SEQ
 
 force Data_i    0 0 ns
 force PSR   0 0 ns
 force Rn0_Thumb 0 0 ns
-force clk   0 0 ns
+force CLK   0 0 ns
 force pipeline_halt 0 0 ns
 force pipeline_rst  0 0 ns
 force multi_cycle   0 0 ns
 
-force clk 0 0 ns, 1 5 ns -r 10 ns
+force CLK 0 0 ns, 1 5 ns -r 10 ns
 
 ###############################################################################
 ## 5.  RESET SEQUENCE
