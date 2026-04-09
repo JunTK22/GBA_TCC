@@ -1,0 +1,221 @@
+// =============================================================================
+// ARM7TDMI Register File Module (37 x 32-bit registers)
+// =============================================================================
+// 
+// Reference: ARM7TDMI Data Sheet (ARM DDI 0029E)
+// - Section 1.4: ARM7TDMI Core Diagram (page 1-5) → "Register Bank
+//   (31 x 32-bit registers) (6 status registers)"
+// - Section 3.7: Registers (pages 3-4 to 3-7) → full banking details
+// - Section 3.6: Operating Modes (page 3-4) → mode encoding (CPSR[4:0])
+// - Section 3.8: The Program Status Registers (pages 3-8 to 3-9)
+//   → CPSR + 5×SPSR (one per exception mode)
+// - Section 3.9: Exceptions (banking on mode switch)
+// - Section 4.6: PSR Transfer (MRS, MSR) → direct CPSR/SPSR access
+// 
+// Physical registers:
+//   - r0–r7     : 8 shared
+//   - r8–r12    : 5 normal + 5 FIQ
+//   - r13–r14   : 6 banks (User/System, FIQ, IRQ, SVC, Abort, Undefined)
+//   - r15       : PC (not banked, special pipeline behaviour)
+//   - CPSR      : 1
+//   - SPSR      : 5 (FIQ, IRQ, SVC, Abort, Undefined)
+//   Total = 31 GPR + 6 status = 37 registers (exact match to core diagram)
+// 
+// FPGA notes:
+// - Dual read ports (combinational reads → fast critical path)
+// - Single write port for GPRs (clocked)
+// - Separate ports for CPSR/SPSR (used by MRS/MSR and exception entry)
+// - PC has dedicated write port (used by BX, data processing to r15, branches)
+// - Fully synthesizable on any FPGA (distributed RAM or registers, ~1.2 kbits)
+// - No block RAM required — tiny logic.
+// =============================================================================
+
+module reg_bank (
+    input  wire        clk,
+    input  wire        reset_n,       // optional (PC=0 on reset, per 3.11)
+
+    // === GPR Read Ports (r0–r15) ============================================
+    input  wire [3:0]  ra,            // register A address
+    input  wire [3:0]  rb,            // register B address
+    output wire [31:0] rd_a,          // read data A
+    output wire [31:0] rd_b,          // read data B
+
+    input  wire [3:0]  rs,            // register B address
+    output wire [31:0] rd_s,          // read data A
+
+    // === GPR Write Port =====================================================
+    input  wire [3:0]  rd_addr,       // destination register (0–15)
+    input  wire [31:0] write_data,            // write data
+    input  wire        Reg_bank_en,        // write enable (from control)
+
+    // === PC (r15) special interface =========================================
+    // (pipeline adds +8 / +4 when reading r15 — see 3.7 and 10.x timing)
+    input  wire        pc_we,
+    input  wire [31:0] incrementer_wdata,
+    output wire [31:0] pc_rdata,      // current PC value
+
+    // === Status Registers (CPSR + SPSR) =====================================
+    input  wire        PSR_wr_en,
+    input  wire        PSR_rd_en,
+    input  wire        PSR_sel_f,
+    input  wire        PSR_flags_only_f,
+    output wire [31:0] cpsr_rdata,
+
+    output wire [31:0] spsr_rdata     // SPSR of current mode (control prevents user mode)
+);
+
+    wire [31:0] cpsr_wdata;
+    wire [31:0] spsr_wdata;
+
+    // =========================================================================
+    // Internal storage — exactly the 31 GPR + 6 status registers
+    // =========================================================================
+    reg [31:0] r_low     [0:7];   // r0–r7 (shared)
+    reg [31:0] r_mid     [0:4];   // r8–r12 (normal)
+    reg [31:0] r_mid_fiq [0:4];   // r8–r12 (FIQ only)
+    reg [31:0] r_sp_lr   [0:5][1:0]; // r13–r14 × 6 banks
+    reg [31:0] pc_reg;            // r15
+    reg [31:0] cpsr_reg;          // CPSR
+    reg [31:0] spsr_reg  [0:4];   // SPSR[FIQ, IRQ, SVC, Abort, Undef]
+
+    // =========================================================================
+    // Helper functions (pure combinational, synthesis-friendly)
+    // =========================================================================
+    function integer bank_idx;
+        input [4:0] mode;
+        begin
+            case (mode)
+                5'b10000, 5'b11111: bank_idx = 0; // User / System
+                5'b10001:           bank_idx = 1; // FIQ
+                5'b10010:           bank_idx = 2; // IRQ
+                5'b10011:           bank_idx = 3; // SVC
+                5'b10111:           bank_idx = 4; // Abort
+                5'b11011:           bank_idx = 5; // Undefined
+                default:            bank_idx = 0;
+            endcase
+        end
+    endfunction
+
+    function integer spsr_idx;
+        input [4:0] mode;
+        begin
+            case (mode)
+                5'b10001: spsr_idx = 0; // FIQ
+                5'b10010: spsr_idx = 1; // IRQ
+                5'b10011: spsr_idx = 2; // SVC
+                5'b10111: spsr_idx = 3; // Abort
+                5'b11011: spsr_idx = 4; // Undefined
+                default:  spsr_idx = -1; // User/System → invalid (control blocks)
+            endcase
+        end
+    endfunction
+
+    // =========================================================================
+    // Synchronous writes (reset + normal operation)
+    // =========================================================================
+    integer i;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            // Reset behaviour (Section 3.11)
+            pc_reg <= 32'h0000_0000;
+            cpsr_reg <= 32'h0000_0000; // mode = User, I/F=0, etc.
+            for (i = 0; i < 8; i = i + 1) r_low[i]     <= 32'b0;
+            for (i = 0; i < 5; i = i + 1) begin
+                r_mid[i]     <= 32'b0;
+                r_mid_fiq[i] <= 32'b0;
+                spsr_reg[i]  <= 32'b0;
+            end
+            for (i = 0; i < 6; i = i + 1) begin
+                r_sp_lr[i][0] <= 32'b0; // r13
+                r_sp_lr[i][1] <= 32'b0; // r14
+            end
+        end else begin
+            // GPR write (r0–r15)
+            if (Reg_bank_en) begin
+                if (rd_addr < 8) begin
+                    r_low[rd_addr] <= write_data;
+                end else if (rd_addr < 13) begin
+                    if (cpsr_reg[4:0] == 5'b10001) // FIQ
+                        r_mid_fiq[rd_addr-8] <= write_data;
+                    else
+                        r_mid[rd_addr-8] <= write_data;
+                end else if (rd_addr < 15) begin
+                    r_sp_lr[bank_idx(cpsr_reg[4:0])][rd_addr-13] <= write_data;
+                end else if (rd_addr == 15) begin
+                    pc_reg <= write_data;
+                end
+            end
+
+            // Dedicated PC write (branches, data ops to r15, etc.)
+            if (pc_we)
+                pc_reg <= incrementer_wdata;
+
+            // CPSR/SPSR write (MSR, exception entry, etc.)
+            if (PSR_wr_en) begin
+                if (PSR_sel_f) begin
+                    if (spsr_idx(cpsr_reg[4:0]) != -1) begin
+                        if (PSR_flags_only_f) begin                            
+                            spsr_reg[spsr_idx(cpsr_reg[4:0])][31:28] <= write_data[31:28];
+                        end else begin
+                            spsr_reg[spsr_idx(cpsr_reg[4:0])] <= write_data;
+                        end
+                    end
+                end else begin
+                    cpsr_reg <= write_data;                    
+                end
+            end
+        end
+    end
+
+    // =========================================================================
+    // Combinational reads (dual port — critical for datapath timing)
+    // =========================================================================
+    reg [31:0] rd_a_int;
+    reg [31:0] rd_b_int;
+    reg [31:0] rd_s_int;
+
+    always @* begin
+        // Read port A
+        if (ra < 8)
+            rd_a_int = r_low[ra];
+        else if (ra < 13)
+            rd_a_int = (cpsr_reg[4:0] == 5'b10001) ? r_mid_fiq[ra-8] : r_mid[ra-8];
+        else if (ra < 15)
+            rd_a_int = r_sp_lr[bank_idx(cpsr_reg[4:0])][ra-13];
+        else
+            rd_a_int = pc_reg;               // r15 → current PC (pipeline adds +8/+4)
+    end
+
+    always @* begin
+        // Read port B (identical logic)
+        if (rb < 8)
+            rd_b_int = r_low[rb];
+        else if (rb < 13)
+            rd_b_int = (cpsr_reg[4:0] == 5'b10001) ? r_mid_fiq[rb-8] : r_mid[rb-8];
+        else if (rb < 15)
+            rd_b_int = r_sp_lr[bank_idx(cpsr_reg[4:0])][rb-13];
+        else
+            rd_b_int = pc_reg;
+    end
+
+    always @* begin
+        // Read port B (identical logic)
+        if (rs < 8)
+            rd_s_int = r_low[rs];
+        else if (rs < 13)
+            rd_s_int = (cpsr_reg[4:0] == 5'b10001) ? r_mid_fiq[rs-8] : r_mid[rs-8];
+        else if (rs < 15)
+            rd_s_int = r_sp_lr[bank_idx(cpsr_reg[4:0])][rs-13];
+        else
+            rd_s_int = pc_reg;
+    end
+
+    // Output assignments
+    assign rd_a      = rd_a_int;
+    assign rd_b      = PSR_rd_en ? (PSR_sel_f ? ((spsr_idx(cpsr_reg[4:0]) != -1) ? spsr_reg[spsr_idx(cpsr_reg[4:0])] : 32'b0) : cpsr_reg) : rd_b_int;
+    assign rd_s      = rd_s_int;
+    assign pc_rdata  = pc_reg;
+    assign cpsr_rdata = cpsr_reg;
+    assign spsr_rdata = (spsr_idx(cpsr_reg[4:0]) != -1) ? spsr_reg[spsr_idx(cpsr_reg[4:0])] : 32'b0;
+
+endmodule
