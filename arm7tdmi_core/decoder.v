@@ -1,12 +1,16 @@
 module decoder(
-	input	[31:0]	Data_i,
-	input	[31:0]	PSR,
-	input			Rn0_Thumb, // Value stored on bit 0 in Rn. Used to activate or deactivate Thumb instructions on BX instruction
-	input			CLK,
-	input			pipeline_halt,
-	input			pipeline_rst,
-	input	[3:0]	multi_cycle,
-	
+	input	wire [31:0]	Data_i,
+	input	wire [31:0]	PSR,
+	input	wire 		Rn0_Thumb, // Value stored on bit 0 in Rn. Used to activate or deactivate Thumb instructions on BX instruction
+	input	wire 		CLK,
+	input	wire 		pipeline_rst,
+	//input	wire [3:0]	multi_cycle,
+
+    input  	wire        nIRQ,         // Interrupt requests
+    input  	wire        nFIQ,
+    input  	wire        ABORT,        // Memory abort input
+
+	// Data coming from memory due to a LDR	
 	output	reg [31:0]	Data_o,
 	
 	output	reg [5:0] 	Inst_decoded_o,
@@ -21,22 +25,38 @@ module decoder(
 	output	reg [15:0]	register_list, // Used during Block Load/Store
 	output	reg			PSR_Thumb_bit = 0, // Activate or Deactivate Thumb instructions by writing into PSR[5]
 
-	output	wire		cond_valid,
+    output  reg  [4:0]  cpsr_mode_out,// Current mode for regfile banking
 
-	output	wire		nMREQ,
-	output	wire		SEQ,
+	output	reg			cond_valid,
 
+    // To Write Data Register (for stores)
+    output reg         wdr_we,       // Write enable to Write Data Register
+    output reg         core_nRW,     // nRW to bus control
+
+    // Memory interface (Section 6 + Section 10)
+    output wire        nMREQ,        // Not memory request
+    output wire        SEQ,          // Sequential address
+    output reg  [1:0]  MAS,          // Memory access size (word/half/byte)
+    output reg         nOPC,         // Not opcode fetch
+    output reg         nTRANS,       // Not translate (user mode indicator)
+
+	// Enable signal for modules and registers
 	output	reg			Addr_reg_en = 1,
 	output	reg			Wr_Data_reg_en = 0,
 	output	reg			Reg_bank_en = 0,
 	output	reg			B_shifter_en = 0,
 	output	reg			Multiplier_reg_en = 0,	
-	output	reg			PSR_en = 0,
+	output	reg			PSR_wr_en = 0,
+	output	reg			PSR_rd_en = 0,
+	output  reg			Writeback_en = 0,
+
+	// Bus Selectors
 	output	reg	[1:0]	Addr_reg_sel = 0,
 	output	reg	[1:0]	Bus_A_sel = 0,
 	output	reg	[2:0]   Bus_B_sel = 0,
 	output	reg		    Wr_Data_reg_sel = 0,
 
+	// Control flags
 	output reg			Set_condition_f,
 	output reg			Imm_Operand_f,
 	output reg			Acumulate_f,
@@ -60,9 +80,8 @@ module decoder(
 	output reg			SP_f,
 	output reg			PC_LR_f,
 	output reg			Low_High_off_f,
-	output reg			Shifter_reg_f,
+	output reg			Shifter_reg_f
 
-	output reg			Writeback_en
 );
 
 // Address Register Input Selector Params
@@ -145,19 +164,41 @@ reg set_multi_cycle = 0;
 reg pipeline_halt_r = 0;
 
 wire [1:0] special_flow;
-wire thumb_state;
 wire [4:0] reg_list_ones;
 
 assign reg_list_ones	=	instruct_reg[0]+instruct_reg[1]+instruct_reg[2]+instruct_reg[3]+instruct_reg[4]+instruct_reg[5]+instruct_reg[6]+instruct_reg[7]+instruct_reg[8]+
 							instruct_reg[9]+instruct_reg[10]+instruct_reg[11]+instruct_reg[12]+instruct_reg[13]+instruct_reg[14]+instruct_reg[15];
 
-assign cond_valid = (cond_o == PSR[31:28] || cond_o == 4'b1110) ? 1'b1 : 1'b0;
 assign special_flow = cond_valid ? cycle_count[1:0] : 2'b00;
 
 assign nMREQ	= cycles_types[1];
 assign SEQ		= (cycles_types[1:0] == 2'b00) ? 1'b1 : ((cycles_types[1:0] == 2'b11) ? 1'b1 : 1'b0);
 
+wire thumb_state;
 assign thumb_state = PSR[5];
+wire [3:0] cond = thumb_state ? 4'b1110 : instruct_reg[31:28]; // THUMB always unconditional
+
+always @* begin
+    case (cond)
+        4'b0000: cond_valid <=  PSR[30];           // EQ  Z==1
+        4'b0001: cond_valid <= ~PSR[30];           // NE  Z==0
+        4'b0010: cond_valid <=  PSR[29];           // CS  C==1
+        4'b0011: cond_valid <= ~PSR[29];           // CC  C==0
+        4'b0100: cond_valid <=  PSR[31];           // MI  N==1
+        4'b0101: cond_valid <= ~PSR[31];           // PL  N==0
+        4'b0110: cond_valid <=  PSR[28];           // VS  V==1
+        4'b0111: cond_valid <= ~PSR[28];           // VC  V==0
+        4'b1000: cond_valid <=  PSR[29] &  PSR[30]; // HI  C==1 & Z==0
+        4'b1001: cond_valid <= ~PSR[29] |  PSR[30]; // LS  C==0 | Z==1
+        4'b1010: cond_valid <= (PSR[31] == PSR[28]);// GE
+        4'b1011: cond_valid <= (PSR[31] != PSR[28]);// LT
+        4'b1100: cond_valid <= ~PSR[30] & (PSR[31] == PSR[28]); // GT
+        4'b1101: cond_valid <=  PSR[30] | (PSR[31] != PSR[28]); // LE
+        4'b1110: cond_valid <= 1'b1;                // AL
+        4'b1111: cond_valid <= 1'b0;                // NV (never)
+        default: cond_valid <= 1'b0;
+    endcase
+end
 
 always @(posedge CLK) begin
 	Data_o	<= Data_i;
@@ -314,7 +355,8 @@ always @(posedge CLK or posedge pipeline_rst) begin
 		Reg_bank_en		<= 0;
 		B_shifter_en	<= 0;
 		Multiplier_reg_en	<= 0;
-		PSR_en			<= 0;
+		PSR_wr_en			<= 0;
+		PSR_rd_en			<= 0;
 
 		Addr_reg_sel <= Incrementer_bus;
 		Bus_A_sel <= Rn;
@@ -361,7 +403,7 @@ always @(posedge CLK or posedge pipeline_rst) begin
 				PSR_sel_f		<= instruct_reg[22];
 				
 				Reg_bank_en		<= 1;
-				PSR_en			<= 1;
+				PSR_rd_en		<= 1; // Rm <= PSR
 
 				opcode_o		<= 4'b1101;
 				Rd_o			<= instruct_reg[15:12];
@@ -371,9 +413,8 @@ always @(posedge CLK or posedge pipeline_rst) begin
 				PSR_sel_f		<= instruct_reg[22];
 				PSR_flags_only_f<= instruct_reg[16];
 
-				Reg_bank_en		<= 1;
 				B_shifter_en	<= 1;
-				PSR_en			<= 1;
+				PSR_wr_en		<= 1;
 
 				opcode_o		<= 4'b1101;
 				Rm_o			<= instruct_reg[3:0];
