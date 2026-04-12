@@ -5,14 +5,15 @@ module address_reg (
     input wire [31:0]   Rn,
 
     input wire          CLK,
-    input wire          rst,
+    input wire          nRST,
     input wire          ABE, // Address Bus Enable (Low => Address Bus goes into high impedance)
     input wire          ALE, // Address Latch Enable
     input wire [1:0]    Addr_reg_sel,
     input wire          Addr_reg_en,
     input wire          Pre_Pos_Inc_f,
 
-    output wire [31:0]  A
+    output wire [31:0]  A,
+    output wire [31:0]  to_incrementer
 );
 
 // Address Register Input Selector Params
@@ -33,8 +34,8 @@ always @(*) begin
     endcase
 end
 
-always @(posedge CLK or posedge rst) begin
-    if (rst) begin
+always @(posedge CLK or negedge nRST) begin
+    if (!nRST) begin
         address_reg <= 32'h0000_0000;
     end else if (Addr_reg_en) begin
         address_reg <= address_i;
@@ -42,5 +43,6 @@ always @(posedge CLK or posedge rst) begin
 end
 
 assign A = Pre_Pos_Inc_f ? address_i : address_reg;
+assign to_incrementer = address_reg;
 
 endmodule

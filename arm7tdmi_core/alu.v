@@ -44,6 +44,7 @@ module alu (
 );
 
     // Internal signals for unified adder (arithmetic ops only)
+    reg [31:0] effective_a;
     reg [31:0] effective_b;
     reg        adder_cin;
     reg        is_arithmetic;
@@ -56,6 +57,7 @@ module alu (
         c              = shifter_carry;   // default = shifter carry (logical ops)
         v              = 1'b0;
         is_arithmetic  = 1'b0;
+        effective_a    = 32'b0;
         effective_b    = 32'b0;
         adder_cin      = 1'b0;
 
@@ -77,41 +79,49 @@ module alu (
             // =========================================================================
             4'b0010: begin // SUB   op_a - op_b
                 is_arithmetic = 1'b1;
+                effective_a   = op_a;
                 effective_b   = ~op_b;
                 adder_cin     = 1'b1;
             end
             4'b0011: begin // RSB   op_b - op_a
                 is_arithmetic = 1'b1;
-                effective_b   = ~op_a;
+                effective_a   = ~op_a;
+                effective_b   = op_b;
                 adder_cin     = 1'b1;
             end
             4'b0100: begin // ADD
                 is_arithmetic = 1'b1;
+                effective_a   = op_a;
                 effective_b   = op_b;
                 adder_cin     = 1'b0;
             end
             4'b0101: begin // ADC
                 is_arithmetic = 1'b1;
+                effective_a   = op_a;
                 effective_b   = op_b;
                 adder_cin     = cpsr_c;
             end
             4'b0110: begin // SBC   op_a - op_b - ~C
                 is_arithmetic = 1'b1;
+                effective_a   = op_a;
                 effective_b   = ~op_b;
                 adder_cin     = cpsr_c;
             end
             4'b0111: begin // RSC   op_b - op_a - ~C
                 is_arithmetic = 1'b1;
-                effective_b   = ~op_a;
+                effective_a   = ~op_a;
+                effective_b   = op_b;
                 adder_cin     = cpsr_c;
             end
             4'b1010: begin // CMP (SUB, flags only)
                 is_arithmetic = 1'b1;
+                effective_a   = op_a;
                 effective_b   = ~op_b;
                 adder_cin     = 1'b1;
             end
             4'b1011: begin // CMN (ADD, flags only)
                 is_arithmetic = 1'b1;
+                effective_a   = op_a;
                 effective_b   = op_b;
                 adder_cin     = 1'b0;
             end
@@ -121,7 +131,7 @@ module alu (
 
         // Perform addition only for arithmetic ops (FPGA carry-chain friendly)
         if (is_arithmetic) begin
-            {c, result} = op_a + effective_b + adder_cin;
+            {c, result} = effective_a + effective_b + adder_cin;
         end
 
         // Common flag logic (Section 4.5.1)

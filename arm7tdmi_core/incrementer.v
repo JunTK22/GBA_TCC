@@ -30,13 +30,15 @@
 module incrementer (
     input  wire [31:0] addr_in,   // Current PC or address register value
     input  wire        tbit,      // TBIT (Thumb state indicator)
-    output wire [31:0] addr_out   // Incremented address (next sequential)
+    output reg  [31:0] addr_out   // Incremented address (next sequential)
 );
 
     // Simple constant increment based on processor state
     // Synthesis note: On FPGA this becomes a 32-bit adder with constant operand.
     // Modern tools (Vivado/Quartus) will optimize it to a few LUTs + carry chain.
-    assign addr_out = addr_in + (tbit ? 32'd2 : 32'd4);
+    always @(*) begin
+        addr_out = addr_in + (tbit ? 32'd2 : 32'd4);        
+    end
 
     // Optional: explicit +4 and +2 for even better optimization on some FPGAs
     // wire [31:0] inc_arm  = addr_in + 32'd4;

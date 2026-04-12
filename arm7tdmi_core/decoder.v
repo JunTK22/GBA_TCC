@@ -3,7 +3,7 @@ module decoder(
 	input	wire [31:0]	PSR,
 	input	wire 		Rn0_Thumb, // Value stored on bit 0 in Rn. Used to activate or deactivate Thumb instructions on BX instruction
 	input	wire 		CLK,
-	input	wire 		pipeline_rst,
+	input	wire 		pipeline_rst_n,
 	//input	wire [3:0]	multi_cycle,
 
     input  	wire        nIRQ,         // Interrupt requests
@@ -11,34 +11,31 @@ module decoder(
     input  	wire        ABORT,        // Memory abort input
 
 	// Data coming from memory due to a LDR	
-	output	reg [31:0]	Data_o,
+	output	reg [31:0]	Data_o = 0,
 	
-	output	reg [5:0] 	Inst_decoded_o,
-	output	reg [3:0]	cond_o,
-	output	reg [3:0]	opcode_o,
-	output	reg [3:0]	Rn_o, // A bus
-	output	reg [3:0]	Rd_o,
-	output	reg [3:0]	Rs_o,
-	output	reg [3:0]	Rm_o, // B bus
-	output	reg [23:0]	Imm_o,
-	output	reg	[7:0]	Shift_o,
-	output	reg [15:0]	register_list, // Used during Block Load/Store
+	output	reg [5:0] 	Inst_decoded_o = 0,
+	output	reg [3:0]	cond_o = 0,
+	output	reg [3:0]	opcode_o = 0,
+	output	reg [3:0]	Rn_o = 0, // A bus
+	output	reg [3:0]	Rd_o = 0,
+	output	reg [3:0]	Rs_o = 0,
+	output	reg [3:0]	Rm_o = 0, // B bus
+	output	reg [23:0]	Imm_o = 0,
+	output	reg	[7:0]	Shift_o = 0,
+	output	reg [15:0]	register_list = 0, // Used during Block Load/Store
 	output	reg			PSR_Thumb_bit = 0, // Activate or Deactivate Thumb instructions by writing into PSR[5]
 
-    output  reg  [4:0]  cpsr_mode_out,// Current mode for regfile banking
-
-	output	reg			cond_valid,
+	output	reg			cond_valid = 0,
 
     // To Write Data Register (for stores)
-    output reg         wdr_we,       // Write enable to Write Data Register
-    output reg         core_nRW,     // nRW to bus control
+    output reg         core_nRW = 0,     // nRW to bus control
 
     // Memory interface (Section 6 + Section 10)
+    output reg  [1:0]  MAS = 0,          // Memory access size (word/half/byte)
     output wire        nMREQ,        // Not memory request
     output wire        SEQ,          // Sequential address
-    output reg  [1:0]  MAS,          // Memory access size (word/half/byte)
-    output reg         nOPC,         // Not opcode fetch
-    output reg         nTRANS,       // Not translate (user mode indicator)
+    output reg         nOPC = 0,         // Not opcode fetch
+    output reg         nTRANS = 0,       // Not translate (user mode indicator)
 
 	// Enable signal for modules and registers
 	output	reg			Addr_reg_en = 1,
@@ -57,30 +54,30 @@ module decoder(
 	output	reg		    Wr_Data_reg_sel = 0,
 
 	// Control flags
-	output reg			Set_condition_f,
-	output reg			Imm_Operand_f,
-	output reg			Acumulate_f,
-	output reg			Mult_Long_f,
-	output reg			Sign_f,
-	output reg			Byte_Word_f,
-	output reg			HW_Byte_f,
-	output reg			Load_f,
-	output reg			Pre_Pos_Indx_f,
-	output reg			Pre_Pos_Inc_f,
-	output reg			Up_Down_f,
-	output reg			Write_Back_f,
-	output reg			L_PSR_UserMode_f,
-	output reg			Link_f,
-	output reg			Transf_len_f,
-	output reg			Interrupt_f,
-	output reg			PSR_sel_f,
-	output reg			PSR_flags_only_f,
-	output reg			H1_f,
-	output reg			H2_f,
-	output reg			SP_f,
-	output reg			PC_LR_f,
-	output reg			Low_High_off_f,
-	output reg			Shifter_reg_f
+	output reg			Set_condition_f = 0,
+	output reg			Imm_Operand_f = 0,
+	output reg			Acumulate_f = 0,
+	output reg			Mult_Long_f = 0,
+	output reg			Sign_f = 0,
+	output reg			Byte_Word_f = 0,
+	output reg			HW_Byte_f = 0,
+	output reg			Load_f = 0,
+	output reg			Pre_Pos_Indx_f = 0,
+	output reg			Pre_Pos_Inc_f = 0,
+	output reg			Up_Down_f = 0,
+	output reg			Write_Back_f = 0,
+	output reg			L_PSR_UserMode_f = 0,
+	output reg			Link_f = 0,
+	output reg			Transf_len_f = 0,
+	output reg			Interrupt_f = 0,
+	output reg			PSR_sel_f = 0,
+	output reg			PSR_flags_only_f = 0,
+	output reg			H1_f = 0,
+	output reg			H2_f = 0,
+	output reg			SP_f = 0,
+	output reg			PC_LR_f = 0,
+	output reg			Low_High_off_f = 0,
+	output reg			Shifter_reg_f = 0
 
 );
 
@@ -155,7 +152,8 @@ parameter NOP			= 6'd35;
 
 reg [5:0] Inst_decoded	= NOP;
 
-reg [31:0] instruct_reg; // Fetched instruction
+reg [31:0] instruct_reg = 0; // Fetched instruction
+reg [31:0] instruct_dec = 0; // Decoded instruction register
 
 reg [11:0] cycles_types = 0;
 reg [19:0] cycle_count = 0;
@@ -204,9 +202,9 @@ always @(posedge CLK) begin
 	Data_o	<= Data_i;
 end
 
-always @(posedge CLK or posedge pipeline_rst) begin // Fetch Register
+always @(posedge CLK or negedge pipeline_rst_n) begin // Fetch Register
 	// Instruction hE1A00000 -> MOV R0, R0 (NOP)
-	instruct_reg <= pipeline_rst ? 32'hE1A00000 : (pipeline_halt_r ? instruct_reg : (thumb_state ? Data_i[15:0] : Data_i));
+	instruct_reg <= !pipeline_rst_n ? 32'hE1A00000 : (pipeline_halt_r ? instruct_reg : (thumb_state ? Data_i[15:0] : Data_i));
 end
 
 //always @(posedge CLK or posedge pipeline_flush_t or posedge pipeline_rst) begin // Fetch Register
@@ -293,8 +291,8 @@ end
 
 // flags [Set_condition_f, Imm_Operand_f, Acumulate_f, Mult_Long_f, Sign_f, 
 //		  Byte_Word_f, HW_Byte_f, Load_f, Pre_Pos_Indx_f, Up_Down_f, Write_Back_f]
-always @(posedge CLK or posedge pipeline_rst) begin
-	if (pipeline_rst) begin
+always @(posedge CLK or negedge pipeline_rst_n) begin
+	if (!pipeline_rst_n) begin
 		opcode_o			<= 0;
 		Rn_o				<= 0;
 		Rd_o				<= 0;
@@ -323,7 +321,8 @@ always @(posedge CLK or posedge pipeline_rst) begin
 		PSR_sel_f			<= 0;
 		PSR_flags_only_f	<= 0;
 	end else if (!pipeline_halt_r && !special_flow[1]) begin
-		Inst_decoded_o 	 <= Inst_decoded;
+		Inst_decoded_o	<= Inst_decoded;
+		instruct_dec	<= instruct_reg;
 
 		Set_condition_f	 <= 0;
 		Imm_Operand_f	 <= 0;
@@ -474,7 +473,8 @@ always @(posedge CLK or posedge pipeline_rst) begin
 				// Abus <= Rs_o and Bbus <= multiplier_o (Rm_o goes to Multiplier directly)				
 				Bus_A_sel <= Rs;
 				Bus_B_sel <= Multiplier_Lo;
-				Reg_bank_en <= 1;
+				Reg_bank_en <= 0;
+				Multiplier_reg_en <= 1;
 				
 				Rd_o			<= instruct_reg[19:16];
 				Rn_o			<= instruct_reg[15:12];
@@ -495,9 +495,10 @@ always @(posedge CLK or posedge pipeline_rst) begin
 				// Abus <= Rs_o and Bbus <= multiplier_o (Multiplier receive Rm_o directly)				
 				Bus_A_sel <= Rs;
 				Bus_B_sel <= Multiplier_Lo;
-				Reg_bank_en <= 1;
+				Reg_bank_en <= 0;
+				Multiplier_reg_en <= 1;
 				
-				Rd_o			<= instruct_reg[19:16];
+				Rd_o			<= instruct_reg[15:12];
 				Rn_o			<= instruct_reg[15:12];
 				Rs_o			<= instruct_reg[11:8];
 				Rm_o			<= instruct_reg[3:0];
@@ -812,18 +813,24 @@ always @(posedge CLK or posedge pipeline_rst) begin
 			//	end
 			//end
 			Mult: begin
+				Multiplier_reg_en <= 0;
+				Reg_bank_en <= 1;
 				if (Acumulate_f) begin
 					opcode_o <= 4'b0100; // ADD Multi Result + Rn
 					Bus_A_sel <= Rn;
 				end
 			end
 			Mult_L: begin
+				Multiplier_reg_en <= 0;
+				Reg_bank_en <= 1;
 				if (Acumulate_f) begin
 					opcode_o <= 4'b0100; // ADD Multi Result + Rn
 					Bus_A_sel <= Rn;
 				end
-				if (cycle_count[2:0] == 3'b001) begin
+				if (cycle_count[2:1] == 2'b01) begin
 					Bus_B_sel <= Multiplier_Hi;
+					Rd_o <= instruct_dec[19:16];
+					Rn_o <= instruct_dec[19:16];
 				end
 			end
 			BranchX: begin
@@ -927,7 +934,7 @@ always @(posedge CLK or posedge pipeline_rst) begin
 	end
 end
 
-always @(cycle_count or cycles_types) begin
+always @(*) begin
 	case (Inst_decoded_o)
 		HW_LS: begin
 			Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : ((cycle_count[2:1] == 2'b01) ? 1'b0 : 1'b1);
