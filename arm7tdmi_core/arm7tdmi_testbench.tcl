@@ -1,0 +1,534 @@
+add wave -radix hex         sim:/arm7tdmi_top/DIN
+add wave -radix bin         sim:/arm7tdmi_top/CPSR
+add wave -radix bin         sim:/arm7tdmi_top/clk
+add wave -radix bin         sim:/decoder/pipeline_halt
+add wave -radix bin         sim:/arm7tdmi_top/reset_n
+add wave -radix hex         sim:/decoder/multi_cycle
+add wave -radix hex         sim:/arm7tdmi_top/Mem_Data_reg_in
+add wave -radix hex         sim:/decoder/instruct_reg
+add wave -radix hex         sim:/decoder/instruct_reg_o
+add wave -radix unsigned    sim:/arm7tdmi_top/Inst_decoded
+add wave -radix bin         sim:/arm7tdmi_top/condition
+add wave -radix bin         sim:/arm7tdmi_top/opcode
+add wave -radix unsigned    sim:/arm7tdmi_top/Rn_addr
+add wave -radix unsigned    sim:/arm7tdmi_top/Rd_addr
+add wave -radix unsigned    sim:/arm7tdmi_top/Rs_addr
+add wave -radix unsigned    sim:/arm7tdmi_top/Rm_addr
+add wave -radix hex         sim:/arm7tdmi_top/Immediate_data
+add wave -radix hex         sim:/arm7tdmi_top/shift_data
+add wave -radix bin         sim:/arm7tdmi_top/Set_PSR_Thumb_bit
+add wave -radix bin         sim:/arm7tdmi_top/cond_valid
+add wave -radix unsigned    sim:/arm7tdmi_top/Bus_A_sel
+add wave -radix unsigned    sim:/arm7tdmi_top/Bus_B_sel
+add wave -radix unsigned    sim:/arm7tdmi_top/writeback_en
+add wave -radix unsigned    sim:/arm7tdmi_top/reg_bank_en
+add wave -radix bin         sim:/arm7tdmi_top/addr_reg_en
+add wave -radix bin         sim:/decoder/special_flow
+add wave -radix hex         sim:/decoder/cycle_count
+add wave -radix hex         sim:/decoder/cycles_types
+add wave -radix bin         sim:/decoder/pipeline_halt_r
+add wave -radix bin         sim:/arm7tdmi_top/nMREQ
+add wave -radix bin         sim:/arm7tdmi_top/SEQ
+add wave -radix decimal     sim:/arm7tdmi_top/reg_bank/r_low
+add wave -radix decimal     sim:/arm7tdmi_top/reg_bank/r_mid
+add wave -radix hex         sim:/arm7tdmi_top/reg_bank/r_mid_fiq
+add wave -radix hex         sim:/arm7tdmi_top/reg_bank/r_sp_lr
+add wave -radix hex         sim:/arm7tdmi_top/reg_bank/pc_reg
+add wave -radix hex         sim:/arm7tdmi_top/reg_bank/cpsr_reg
+add wave -radix hex         sim:/arm7tdmi_top/reg_bank/spsr_reg
+add wave -radix decimal     sim:/arm7tdmi_top/Bus_A
+add wave -radix decimal     sim:/arm7tdmi_top/Bus_B
+add wave -radix decimal     sim:/arm7tdmi_top/Alu_bus
+add wave -radix hex         sim:/arm7tdmi_top/PC_bus
+add wave -radix hex         sim:/arm7tdmi_top/Incrementer_bus
+
+force DIN    0 0 ns
+force clk   0 0 ns
+force pipeline_halt 0 0 ns
+force reset_n  0 0 ns
+force nIRQ  0 0 ns
+force nFIQ  0 0 ns
+force ABORT 0 0 ns
+
+force reset_n  1 2 ns
+force clk 0 0 ns, 1 5 ns -r 10 ns
+
+###############################################################################
+## 5.  RESET SEQUENCE
+##     nRESET LOW for at least 2 MCLK cycles (§2.1 nRESET description).
+##     We hold it LOW for 3 cycles (30 ns) for safety.
+##     nWAIT must remain HIGH during reset.
+###############################################################################
+force DIN       32'hE1A00000  0 ns  ;# NOP on DIN bus: MOV R0,R0 during reset
+
+###############################################################################
+## 6.  POST-RESET PIPELINE FILL  (t = 30 – 50 ns)
+##     Feed 3 NOPs (MOV R0,R0 = 0xE1A00000) to flush pipeline artefacts
+##     before meaningful instructions arrive in the Execute stage.
+##
+##     NOP encoding:  Cond=AL(1110) | 00I=0 | OP=MOV(1101) | S=0
+##                    Rn=0000 | Rd=R0(0000) | shift=0 | Rm=R0(0000)
+##                  = 0xE1A00000
+###############################################################################
+force DIN  32'hE1A00000  30 ns   ;# PIPELINE FILL – NOP 1
+force DIN  32'hE1A00000  40 ns   ;# PIPELINE FILL – NOP 2
+force DIN  32'hE1A00000  50 ns   ;# PIPELINE FILL – NOP 3
+
+###############################################################################
+## 7.  DATA PROCESSING INSTRUCTIONS  (§4.5)
+##     Each takes 1S cycle = 10 ns.
+##     Format: Cond | 00 | I | Opcode[3:0] | S | Rn[3:0] | Rd[3:0] | Operand2
+###############################################################################
+
+## ── TEST 1 ──  MOV R0, #5   (immediate)
+##   Cond=1110 | 001 | OP=MOV(1101) | S=0 | Rn=0000 | Rd=R0(0000) | rot=0 | imm=5
+##   = 0xE3A00005    R0 ← 5
+force DIN  32'hE3A00005  60 ns
+
+## ── TEST 2 ──  MOV R1, #10  (immediate)
+##   Rd=R1(0001), imm=0x0A
+##   = 0xE3A0100A    R1 ← 10
+force DIN  32'hE3A0100A  70 ns
+
+## ── TEST 3 ──  ADD R2, R0, R1  (register)
+##   Cond=1110 | 000 | OP=ADD(0100) | S=0 | Rn=R0(0000) | Rd=R2(0010) | Rm=R1(0001)
+##   = 0xE0802001    R2 ← R0 + R1 = 15
+force DIN  32'hE0802001  80 ns
+
+## ── TEST 4 ──  ADC R3, R2, R0   (Add with Carry)
+##   OP=ADC(0101), Rn=R2(0010), Rd=R3(0011), Rm=R0(0000)
+##   = 0xE0A23000    R3 ← R2 + R0 + C = 15 + 5 + C
+force DIN  32'hE0A23000  90 ns
+
+## ── TEST 5 ──  SUB R4, R2, R0   (Subtract)
+##   OP=SUB(0010), Rn=R2(0010), Rd=R4(0100), Rm=R0(0000)
+##   = 0xE0424000    R4 ← R2 - R0 = 10
+force DIN  32'hE0424000 100 ns
+
+## ── TEST 6 ──  SBC R5, R2, R0   (Subtract with Carry)
+##   OP=SBC(0110), Rn=R2(0010), Rd=R5(0101), Rm=R0(0000)
+##   = 0xE0C25000    R5 ← R2 - R0 - 1 + C
+force DIN  32'hE0C25000 110 ns
+
+## ── TEST 7 ──  RSB R6, R0, R1   (Reverse Subtract: Rd = Op2 - Rn)
+##   OP=RSB(0011), Rn=R0(0000), Rd=R6(0110), Rm=R1(0001)
+##   = 0xE0606001    R6 ← R1 - R0 = 5
+force DIN  32'hE0606001 120 ns
+
+## ── TEST 8 ──  AND R7, R0, R1
+##   OP=AND(0000), Rn=R0(0000), Rd=R7(0111), Rm=R1(0001)
+##   = 0xE0007001    R7 ← R0 & R1 = 0  (5 & 10 = 0b0101 & 0b1010 = 0)
+force DIN  32'hE0007001 130 ns
+
+## ── TEST 9 ──  ORR R8, R0, R1
+##   OP=ORR(1100), Rn=R0(0000), Rd=R8(1000), Rm=R1(0001)
+##   = 0xE1808001    R8 ← R0 | R1 = 15
+force DIN  32'hE1808001 140 ns
+
+## ── TEST 10 ── EOR R9, R0, R1  (Exclusive OR)
+##   OP=EOR(0001), Rn=R0(0000), Rd=R9(1001), Rm=R1(0001)
+##   = 0xE0209001    R9 ← R0 ^ R1 = 15
+force DIN  32'hE0209001 150 ns
+
+## ── TEST 11 ── BIC R10, R2, R0  (Bit Clear: Rd = Rn AND NOT Rm)
+##   OP=BIC(1110), Rn=R2(0010), Rd=R10(1010), Rm=R0(0000)
+##   = 0xE1C2A000    R10 ← R2 & ~R0 = 15 & ~5 = 10
+force DIN  32'hE1C2A000 160 ns
+
+## ── TEST 12 ── MVN R11, R0  (Move Negative: Rd = NOT Rm)
+##   OP=MVN(1111), Rn=0000, Rd=R11(1011), Rm=R0(0000)
+##   = 0xE1E0B000    R11 ← ~R0 = 0xFFFFFFFA
+force DIN  32'hE1E0B000 170 ns
+
+## ── TEST 13 ── CMP R2, R1   (Compare – sets flags, S=1, Rd=0000)
+##   OP=CMP(1010) | S=1, Rn=R2(0010), Rd=0000, Rm=R1(0001)
+##   = 0xE1520001    flags ← R2 - R1 = 15 - 10 = +5 (N=0,Z=0,C=1,V=0)
+force DIN  32'hE1520001 180 ns
+
+## ── TEST 14 ── CMN R0, R1   (Compare Negative – flags ← Rn + Op2)
+##   OP=CMN(1011) | S=1, Rn=R0(0000), Rd=0000, Rm=R1(0001)
+##   = 0xE1700001    flags ← R0 + R1 = 15
+force DIN  32'hE1700001 190 ns
+
+## ── TEST 15 ── TST R0, R1   (Test bits: flags ← Rn AND Op2)
+##   OP=TST(1000) | S=1, Rn=R0(0000), Rd=0000, Rm=R1(0001)
+##   = 0xE1100001    flags ← R0 & R1 = 0  → Z=1
+force DIN  32'hE1100001 200 ns
+
+## ── TEST 16 ── TEQ R2, R1   (Test Equality: flags ← Rn EOR Op2)
+##   OP=TEQ(1001) | S=1, Rn=R2(0010), Rd=0000, Rm=R1(0001)
+##   = 0xE1320001    flags ← R2 ^ R1 = 5  → Z=0
+force DIN  32'hE1320001 210 ns
+
+## ── TEST 17 ── MOV R0, R2  (register transfer)
+##   OP=MOV(1101), I=0, Rn=0000, Rd=R0(0000), Rm=R2(0010)
+##   = 0xE1A00002    R0 ← R2 = 15
+force DIN  32'hE1A00002 220 ns
+
+## ── TEST 18 ── MOV R0, R0, LSL #2  (logical shift left immediate)
+##   OP=MOV, I=0, Rd=R0(0000), shift_imm=00010, sh_type=00(LSL), Rm=R0(0000)
+##   = 0xE1A00100    R0 ← R0 << 2 = 60
+force DIN  32'hE1A00100 230 ns
+
+## ── TEST 19 ── MOV R0, R0, LSR #1  (logical shift right immediate)
+##   shift_imm=00001, sh_type=01(LSR)
+##   = 0xE1A000A0    R0 ← R0 >> 1 = 30
+force DIN  32'hE1A000A0 240 ns
+
+## ── TEST 20 ── MOV R1, #10  (restore R1 for subsequent tests)
+force DIN  32'hE3A0100A 250 ns
+
+###############################################################################
+## 8.  PSR TRANSFER  (§4.6)
+##     MRS : Rd ← CPSR / SPSR  (1S cycle)
+##     MSR : CPSR / SPSR ← Rm  (1S cycle)
+###############################################################################
+
+## ── TEST 21 ── MRS R12, CPSR  (Read Current Program Status Register)
+##   Cond=1110 | 00010 | R=0 | 00 | 1111 | Rd=R12(1100) | 000000000000
+##   = 0xE10FC000    R12 ← CPSR
+force DIN  32'hE10FC000 260 ns
+
+## ── TEST 22 ── MSR CPSR, R12  (Write all fields of CPSR)
+##   Cond=1110 | 00 | I=0 | 10 | R=0 | 10 | field=1111 | 1111 | 0000 | Rm=R12(1100)
+##   = 0xE129F00C    CPSR ← R12
+force DIN  32'hE129F00C 270 ns
+
+## ── TEST 23 ── MRS R12, SPSR  (Read Saved Program Status Register)
+##   R=1 → 0xE14FC000
+force DIN  32'hE14FC000 280 ns
+
+
+###############################################################################
+## 9.  MULTIPLY  (§4.7)
+##     MUL Rd, Rm, Rs     :  Rd = Rm * Rs        (1S + mI cycles, m≈2–5)
+##     MLA Rd, Rm, Rs, Rn :  Rd = Rm * Rs + Rn
+##     Format: Cond | 000000 | A | S | Rd | Rn | Rs | 1001 | Rm
+##
+##     NOPs are inserted after each multiply to cover the internal (I) cycles.
+###############################################################################
+
+## ── TEST 24 ── MUL R8, R1, R0   ; R8 = R1 * R0 = 10 * 15 = 150
+##   Cond=1110 | 0000000 | A=0 | S=0 | Rd=R8(1000) | Rn=0000 | Rs=R0(0000) | 1001 | Rm=R1(0001)
+##   = 0xE0080091
+force DIN  32'hE0080091 290 ns
+force DIN  32'hE1A00000 300 ns   ;# NOP – MUL internal cycle 1
+force DIN  32'hE1A00000 310 ns   ;# NOP – MUL internal cycle 2
+force DIN  32'hE1A00000 320 ns   ;# NOP – MUL internal cycle 3
+force DIN  32'hE1A00000 330 ns   ;# NOP – MUL internal cycle 4
+
+## ── TEST 25 ── MLA R9, R1, R0, R2  ; R9 = R1*R0 + R2 = 150 + 15 = 165
+##   Cond=1110 | 0000001 | A=1 | S=0 | Rd=R9(1001) | Rn=R2(0010) | Rs=R0(0000) | 1001 | Rm=R1(0001)
+##   = 0xE0292091
+force DIN  32'hE0292091 340 ns
+force DIN  32'hE1A00000 350 ns   ;# NOP – MLA internal cycle 1
+force DIN  32'hE1A00000 360 ns   ;# NOP – MLA internal cycle 2
+force DIN  32'hE1A00000 370 ns   ;# NOP – MLA internal cycle 3
+force DIN  32'hE1A00000 380 ns   ;# NOP – MLA internal cycle 4
+
+
+###############################################################################
+## 10. MULTIPLY LONG  (§4.8)
+##     UMULL  : {RdHi,RdLo} = Rm * Rs  (unsigned)
+##     SMULL  : {RdHi,RdLo} = Rm * Rs  (signed)
+##     UMLAL  : {RdHi,RdLo} += Rm * Rs (unsigned accumulate)
+##     SMLAL  : {RdHi,RdLo} += Rm * Rs (signed   accumulate)
+##     Format: Cond | 00001 | U | A | S | RdHi | RdLo | Rs | 1001 | Rm
+###############################################################################
+
+## ── TEST 26 ── UMULL R10, R11, R1, R0  (Unsigned Multiply Long)
+##   U=0 (UMULL), A=0, S=0, RdHi=R11(1011), RdLo=R10(1010), Rs=R0(0000), Rm=R1(0001)
+##   = 0xE08BA091
+##   {R11,R10} ← R1 * R0 (unsigned 64-bit)
+force DIN  32'hE08BA091 390 ns
+force DIN  32'hE1A00000 400 ns   ;# NOP – UMULL internal cycle 1
+force DIN  32'hE1A00000 410 ns   ;# NOP – UMULL internal cycle 2
+force DIN  32'hE1A00000 420 ns   ;# NOP – UMULL internal cycle 3
+force DIN  32'hE1A00000 430 ns   ;# NOP – UMULL internal cycle 4
+
+## ── TEST 27 ── SMULL R10, R11, R1, R0  (Signed Multiply Long)
+##   U=1, A=0 → 0xE0CBA091
+force DIN  32'hE0CBA091 440 ns
+force DIN  32'hE1A00000 450 ns   ;# NOP – SMULL internal cycle 1
+force DIN  32'hE1A00000 460 ns   ;# NOP – SMULL internal cycle 2
+force DIN  32'hE1A00000 470 ns   ;# NOP – SMULL internal cycle 3
+force DIN  32'hE1A00000 480 ns   ;# NOP – SMULL internal cycle 4
+
+
+###############################################################################
+## 11. SINGLE DATA TRANSFER – WORD / BYTE  (§4.9)
+##     STR / LDR / STRB / LDRB
+##     Format: Cond | 01 | I | P | U | B | W | L | Rn | Rd | Offset[11:0]
+##
+##     STR = 2N cycles          (processor drives DIN during write phase)
+##     LDR = 1S + 1N + 1I      (we must drive DIN with data during data phase)
+##
+##     Registers after DATA PROCESSING section:
+##       R0 = 30   R1 = 10   R2 = 15
+##     We use R1 as base address (=10 / 0x0000000A).
+###############################################################################
+
+## ── TEST 28 ── STR R0, [R1]    ; Mem[R1] ← R0 = 30
+##   Cond=1110 | 01 | I=0 | P=1 | U=1 | B=0 | W=0 | L=0 | Rn=R1(0001) | Rd=R0(0000) | off=0
+##   = 0xE5810000
+##   Cycle 1 (fetch STR)  : DIN = instruction
+##   Cycle 2 (addr phase) : DIN = next instruction (processor calc address)
+##   Cycle 3 (write N)    : processor drives DIN with R0 value – no need to force
+force DIN  32'hE5810000 490 ns   ;# STR R0, [R1]  – fetch
+force DIN  32'hE1A00000 500 ns   ;# NOP: fetch during address phase
+force DIN  32'hE1A00000 510 ns   ;# NOP: processor driving DIN (write data)
+
+## ── TEST 29 ── LDR R3, [R1]   ; R3 ← Mem[R1]
+##   L=1 → 0xE5913000
+##   Cycle 1 (fetch LDR)  : DIN = instruction
+##   Cycle 2 (addr N)     : DIN = next instruction
+##   Cycle 3 (data N)     : DIN = data returned by memory (we force 0x0000001E)
+##   Cycle 4 (I)          : internal stall
+force DIN  32'hE5913000 520 ns   ;# LDR R3, [R1]  – fetch
+force DIN  32'hE1A00000 530 ns   ;# NOP: fetch during address cycle
+force DIN  32'h0000001E 540 ns   ;# DATA PHASE: memory returns 0x1E = 30 → R3
+force DIN  32'hE1A00000 550 ns   ;# NOP: I-cycle (pipeline resume)
+
+## ── TEST 30 ── STRB R0, [R1]  ; Mem[R1] ← R0[7:0]  (byte write)
+##   B=1, L=0 → 0xE5C10000
+force DIN  32'hE5C10000 560 ns   ;# STRB R0, [R1] – fetch
+force DIN  32'hE1A00000 570 ns   ;# NOP: address cycle
+force DIN  32'hE1A00000 580 ns   ;# NOP: byte write (processor drives DIN)
+
+## ── TEST 31 ── LDRB R4, [R1]  ; R4 ← zero-extended Mem[R1][7:0]
+##   B=1, L=1 → 0xE5D14000
+force DIN  32'hE5D14000 590 ns   ;# LDRB R4, [R1] – fetch
+force DIN  32'hE1A00000 600 ns   ;# NOP: address cycle
+force DIN  32'h0000001E 610 ns   ;# DATA PHASE: byte from memory
+force DIN  32'hE1A00000 620 ns   ;# NOP: I-cycle
+
+
+###############################################################################
+## 12. HALFWORD & SIGNED DATA TRANSFER  (§4.10)
+##     Register-offset form: Cond | 000 | P | U | 0 | W | L | Rn | Rd | 0000 | 1SH1 | Rm
+##     SH bits:  01=LDRH / STRH,  10=LDRSB,  11=LDRSH
+###############################################################################
+
+## ── TEST 32 ── STRH R0, [R1]   ; Mem[R1] ← R0[15:0]
+##   Cond=1110 | 000 P=1 U=1 0 W=0 L=0 | Rn=R1(0001) | Rd=R0(0000) | 0000 | 1011 | Rm=0
+##   = 0xE18100B0
+force DIN  32'hE18100B0 630 ns   ;# STRH R0, [R1] – fetch
+force DIN  32'hE1A00000 640 ns   ;# NOP: address cycle
+force DIN  32'hE1A00000 650 ns   ;# NOP: halfword write
+
+## ── TEST 33 ── LDRH R5, [R1]   ; R5 ← zero-extended halfword at Mem[R1]
+##   L=1, SH=01 → 0xE19150B0
+force DIN  32'hE19150B0 660 ns   ;# LDRH R5, [R1] – fetch
+force DIN  32'hE1A00000 670 ns   ;# NOP: address cycle
+force DIN  32'h0000001E 680 ns   ;# DATA PHASE: halfword from memory
+force DIN  32'hE1A00000 690 ns   ;# NOP: I-cycle
+
+## ── TEST 34 ── LDRSB R6, [R1]  ; R6 ← sign-extended byte
+##   SH=10, L=1 → 0xE19160D0
+force DIN  32'hE19160D0 700 ns   ;# LDRSB R6, [R1]
+force DIN  32'hE1A00000 710 ns   ;# NOP: address cycle
+force DIN  32'h000000FE 720 ns   ;# DATA PHASE: byte (0xFE, sign-extended = 0xFFFFFFFE)
+force DIN  32'hE1A00000 730 ns   ;# NOP: I-cycle
+
+## ── TEST 35 ── LDRSH R7, [R1]  ; R7 ← sign-extended halfword
+##   SH=11, L=1 → 0xE19170F0
+force DIN  32'hE19170F0 740 ns   ;# LDRSH R7, [R1]
+force DIN  32'hE1A00000 750 ns   ;# NOP: address cycle
+force DIN  32'h0000FFFE 760 ns   ;# DATA PHASE: halfword (sign-extended)
+force DIN  32'hE1A00000 770 ns   ;# NOP: I-cycle
+
+
+###############################################################################
+## 13. BLOCK DATA TRANSFER  (§4.11)
+##     STM / LDM
+##     Format: Cond | 100 | P | U | S | W | L | Rn | RegisterList[15:0]
+##     Using register list {R0, R2, R3} = 0x000D, n=3 registers
+##       STM: (n-1)S + 2N  = 2S+2N = 4 cycles
+##       LDM: (n-1)S + 2N + 1I = 2S+2N+1I = 5 cycles
+###############################################################################
+
+## ── TEST 36 ── STMIA R1, {R0, R2, R3}   (Store Multiple, Increment After)
+##   Cond=1110 | 100 P=0 U=1 S=0 W=0 L=0 | Rn=R1(0001) | list=0x000D
+##   = 0xE881000D
+##   Processor drives DIN during the 3 write cycles.
+force DIN  32'hE881000D 780 ns   ;# STMIA R1, {R0,R2,R3} – fetch
+force DIN  32'hE1A00000 790 ns   ;# NOP: write cycle (R0)
+force DIN  32'hE1A00000 800 ns   ;# NOP: write cycle (R2)
+force DIN  32'hE1A00000 810 ns   ;# NOP: write cycle (R3)
+force DIN  32'hE1A00000 820 ns   ;# NOP: drain
+
+## ── TEST 37 ── LDMIA R1, {R0, R2, R3}   (Load Multiple, Increment After)
+##   L=1 → 0xE891000D
+##   Three consecutive data cycles; we supply data values on DIN bus.
+force DIN  32'hE891000D 830 ns   ;# LDMIA R1, {R0,R2,R3} – fetch
+force DIN  32'h0000001E 840 ns   ;# DATA: R0 ← Mem[R1+0]   = 30
+force DIN  32'h0000000F 850 ns   ;# DATA: R2 ← Mem[R1+4]   = 15
+force DIN  32'h0000000A 860 ns   ;# DATA: R3 ← Mem[R1+8]   = 10
+force DIN  32'hE1A00000 870 ns   ;# NOP: I-cycle (pipeline resume)
+force DIN  32'hE1A00000 880 ns   ;# NOP: drain
+
+## ── TEST 38 ── STMDB R1!, {R0, R2, R3}  (Store Multiple Decrement Before, writeback)
+##   P=1, U=0, W=1, L=0 → Cond|100|1|0|0|1|0|Rn=0001|list=0x000D
+##   = 0xE921000D
+force DIN  32'hE921000D 890 ns   ;# STMDB R1!, {R0,R2,R3}
+force DIN  32'hE1A00000 900 ns   ;# NOP: write cycle 1
+force DIN  32'hE1A00000 910 ns   ;# NOP: write cycle 2
+force DIN  32'hE1A00000 920 ns   ;# NOP: write cycle 3
+force DIN  32'hE1A00000 930 ns   ;# NOP: drain
+
+## ── TEST 39 ── LDMFD SP!, {R0, R2, R3}  (Pop – R13 used as SP)
+##   Rn=R13(1101), P=0, U=1, W=1, L=1
+##   = 0xE8BD000D
+force DIN  32'hE8BD000D 940 ns   ;# LDMFD SP!, {R0,R2,R3}
+force DIN  32'h0000001E 950 ns   ;# DATA: R0
+force DIN  32'h0000000F 960 ns   ;# DATA: R2
+force DIN  32'h0000000A 970 ns   ;# DATA: R3
+force DIN  32'hE1A00000 980 ns   ;# NOP: I-cycle
+force DIN  32'hE1A00000 990 ns   ;# NOP: drain
+
+
+###############################################################################
+## 14. SINGLE DATA SWAP  (§4.12)
+##     SWP Rd, Rm, [Rn]   (atomic read-modify-write, asserts LOCK)
+##     Format: Cond | 00010 | B | 00 | Rn | Rd | 0000 | 1001 | Rm
+##     Cycle cost: 1S + 2N + 1I = 4 cycles
+###############################################################################
+
+## ── TEST 40 ── SWP R4, R0, [R1]   ; R4=Mem[R1], Mem[R1]=R0  (word swap)
+##   Cond=1110 | 00010 | B=0 | 00 | Rn=R1(0001) | Rd=R4(0100) | 0000 | 1001 | Rm=R0(0000)
+##   = 0xE1014090
+##   LOCK goes HIGH for the 2N cycles (read then write).
+##   Data phase (N read): DIN = value read from Mem[R1]
+force DIN  32'hE1014090 1000 ns  ;# SWP R4, R0, [R1]    – fetch
+force DIN  32'hE1A00000 1010 ns  ;# NOP: address + read cycle
+force DIN  32'h0000001E 1020 ns  ;# DATA PHASE (N read): Mem[R1] → R4 = 30
+force DIN  32'hE1A00000 1030 ns  ;# NOP: write cycle (processor drives DIN = R0)
+force DIN  32'hE1A00000 1040 ns  ;# NOP: I-cycle (pipeline resume)
+
+## ── TEST 41 ── SWPB R4, R0, [R1]  (byte swap)
+##   B=1 → 0xE1414090
+force DIN  32'hE1414090 1050 ns  ;# SWPB R4, R0, [R1]
+force DIN  32'hE1A00000 1060 ns  ;# NOP: address + read
+force DIN  32'h0000001E 1070 ns  ;# DATA PHASE: byte from memory
+force DIN  32'hE1A00000 1080 ns  ;# NOP: write + I-cycle
+force DIN  32'hE1A00000 1090 ns  ;# NOP
+
+
+###############################################################################
+## 15. BRANCH AND EXCHANGE  (§4.3)
+##     BX Rn  – Branch to address in Rn; bit[0] selects ARM/THUMB mode
+##     Format: Cond | 000100101111111111110001 | Rn
+##     Cycle cost: 2S + 1N = 3 cycles  (pipeline flush)
+###############################################################################
+
+## ── TEST 42 ── BX R14   ; Return to address in R14 (link register)
+##   Cond=1110 | 0001 0010 1111 1111 1111 0001 | Rn=R14(1110)
+##   = 0xE12FFF1E
+force DIN  32'hE12FFF1E 1100 ns  ;# BX R14
+force DIN  32'hE1A00000 1110 ns  ;# NOP: pipeline flush cycle 1 (discarded)
+force DIN  32'hE1A00000 1120 ns  ;# NOP: pipeline flush cycle 2 (discarded)
+
+
+###############################################################################
+## 16. BRANCH / BRANCH WITH LINK  (§4.4)
+##     B  : PC ← PC + 8 + (SignExtend(offset) << 2)
+##     BL : R14 ← PC, PC ← target
+##     Format: Cond | 101 | L | offset[23:0]
+##     Cycle cost: 2S + 1N = 3 cycles
+##
+##     Offset calculation: offset = (target - (PC+8)) / 4
+##     Instructions below use offset=2 (branch over next 2 words).
+###############################################################################
+
+## ── TEST 43 ── B  +8   (branch forward over 2 words; offset field = 2)
+##   Cond=1110 | 101 | L=0 | offset=0x000002
+##   = 0xEA000002
+force DIN  32'hEA000002 1130 ns  ;# B +8
+force DIN  32'hE1A00000 1140 ns  ;# NOP: discarded (pipeline flush)
+force DIN  32'hE1A00000 1150 ns  ;# NOP: discarded (pipeline flush)
+
+## ── TEST 44 ── BL +4  (branch with link; offset field = 1, saves PC in R14)
+##   Cond=1110 | 101 | L=1 | offset=0x000001
+##   = 0xEB000001
+force DIN  32'hEB000001 1160 ns  ;# BL +4 (R14 saved, branch taken)
+force DIN  32'hE1A00000 1170 ns  ;# NOP: discarded (pipeline flush)
+force DIN  32'hE1A00000 1180 ns  ;# NOP: discarded (pipeline flush)
+
+
+###############################################################################
+## 17. SOFTWARE INTERRUPT  (§4.13)
+##     SWI <imm24>  – Forces processor to Supervisor mode at vector 0x08
+##     Format: Cond | 1111 | imm24
+##     Cycle cost: 2S + 1N = 3 cycles
+##     Saves PC in R14_svc, saves CPSR in SPSR_svc, sets I=1
+###############################################################################
+
+## ── TEST 45 ── SWI #0x01  (OS call with comment field = 1)
+##   Cond=1110 | 1111 | 0x000001
+##   = 0xEF000001
+force DIN  32'hEF000001 1190 ns  ;# SWI #1
+force DIN  32'hE1A00000 1200 ns  ;# NOP: discarded (pipeline flush)
+force DIN  32'hE1A00000 1210 ns  ;# NOP: discarded (pipeline flush)
+
+## ── TEST 46 ── SWI #0x00  (convention: SWI 0 = exit)
+##   = 0xEF000000
+force DIN  32'hEF000000 1220 ns  ;# SWI #0
+force DIN  32'hE1A00000 1230 ns  ;# NOP: discarded
+force DIN  32'hE1A00000 1240 ns  ;# NOP: discarded
+
+###############################################################################
+## 20. CONDITIONAL EXECUTION EXAMPLES  (§4.2 – Condition Field)
+##     All 4 condition flags tested: Z, N, C, V
+##
+##     First set up known flags with CMP then use conditional MOVs.
+##     MOVNE = MOV if Z=0  → condition code = 4'b0001
+##     MOVEQ = MOV if Z=1  → condition code = 4'b0000
+##     MOVLT = MOV if N!=V → condition code = 4'b1011
+##     MOVGE = MOV if N==V → condition code = 4'b1010
+###############################################################################
+
+## ── TEST 50 ── MOV R0, #5  (reset R0 for flag tests)
+force DIN  32'hE3A00005 1340 ns  ;# MOV R0, #5
+
+## ── TEST 51 ── SUBS R0, R0, R0  ; R0=0, sets Z=1, N=0, C=1, V=0
+##   OP=SUB(0010), S=1, Rn=Rd=R0, Rm=R0  → 0xE0500000
+force DIN  32'hE0500000 1350 ns  ;# SUBS R0, R0, R0  (Z flag set)
+
+## ── TEST 52 ── MOVEQ R3, #0xFF  ; Executes because Z=1
+##   Cond=EQ(0000), Rd=R3(0011), Imm=0xFF  → 0x03A030FF
+force DIN  32'h03A030FF 1360 ns  ;# MOVEQ R3, #0xFF  → R3 = 0xFF
+
+## ── TEST 53 ── MOVNE R4, #0xFF  ; Skipped because Z=1  (nEXEC=HIGH)
+##   Cond=NE(0001), Rd=R4(0100)  → 0x13A040FF
+force DIN  32'h13A040FF 1370 ns  ;# MOVNE R4, #0xFF  (not executed)
+
+## ── TEST 54 ── MOV R1, #10  ; Restore R1
+force DIN  32'hE3A0100A 1380 ns
+
+## ── TEST 55 ── CMP R0, R1  ; 0 - 10 = -10 → N=1, Z=0, C=0, V=0
+force DIN  32'hE1500001 1390 ns  ;# CMP R0, R1
+
+## ── TEST 56 ── MOVLT R5, #1  ; Executes because N=1, V=0  (N!=V)
+##   Cond=LT(1011)  → 0xB3A05001
+force DIN  32'hB3A05001 1400 ns  ;# MOVLT R5, #1    → R5 = 1
+
+## ── TEST 57 ── MOVGE R6, #1  ; Skipped because N=1,V=0 (N!=V → not GE)
+##   Cond=GE(1010)  → 0xA3A06001
+force DIN  32'hA3A06001 1410 ns  ;# MOVGE R6, #1    (not executed)
+
+###############################################################################
+## 22. TAIL – HALT LOOP  (infinite branch to self)
+##     B #-8 : offset = (PC - (PC+8)) / 4 = -2 = 0xFFFFFE
+##     = 0xEAFFFFFE
+###############################################################################
+force DIN  32'hEAFFFFFE 1470 ns  ;# B -8 (branch to self: infinite loop / halt)
+force DIN  32'hE1A00000 1480 ns  ;# NOP: pipeline flush
+force DIN  32'hE1A00000 1490 ns  ;# NOP: pipeline flush
+
+
+###############################################################################
+## 23. RUN SIMULATION
+###############################################################################
+run 1500 ns
+
+wave zoom full

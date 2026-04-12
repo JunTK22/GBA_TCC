@@ -33,6 +33,7 @@
 module reg_bank (
     input  wire        clk,
     input  wire        reset_n,       // optional (PC=0 on reset, per 3.11)
+    input  wire [4:0]  cpsr_mode,
 
     // === GPR Read Ports (r0–r15) ============================================
     input  wire [3:0]  ra,            // register A address
@@ -40,8 +41,8 @@ module reg_bank (
     output wire [31:0] rd_a,          // read data A
     output wire [31:0] rd_b,          // read data B
 
-    input  wire [3:0]  rs,            // register B address
-    output wire [31:0] rd_s,          // read data A
+    input  wire [3:0]  rs,            // register S address
+    output wire [31:0] rd_s,          // read data S
 
     // === GPR Write Port =====================================================
     input  wire [3:0]  rd_addr,       // destination register (0–15)
@@ -135,12 +136,12 @@ module reg_bank (
                 if (rd_addr < 8) begin
                     r_low[rd_addr] <= write_data;
                 end else if (rd_addr < 13) begin
-                    if (cpsr_reg[4:0] == 5'b10001) // FIQ
+                    if (cpsr_mode == 5'b10001) // FIQ
                         r_mid_fiq[rd_addr-8] <= write_data;
                     else
                         r_mid[rd_addr-8] <= write_data;
                 end else if (rd_addr < 15) begin
-                    r_sp_lr[bank_idx(cpsr_reg[4:0])][rd_addr-13] <= write_data;
+                    r_sp_lr[bank_idx(cpsr_mode)][rd_addr-13] <= write_data;
                 end else if (rd_addr == 15) begin
                     pc_reg <= write_data;
                 end
@@ -153,11 +154,11 @@ module reg_bank (
             // CPSR/SPSR write (MSR, exception entry, etc.)
             if (PSR_wr_en) begin
                 if (PSR_sel_f) begin
-                    if (spsr_idx(cpsr_reg[4:0]) != -1) begin
+                    if (spsr_idx(cpsr_mode) != -1) begin
                         if (PSR_flags_only_f) begin                            
-                            spsr_reg[spsr_idx(cpsr_reg[4:0])][31:28] <= write_data[31:28];
+                            spsr_reg[spsr_idx(cpsr_mode)][31:28] <= write_data[31:28];
                         end else begin
-                            spsr_reg[spsr_idx(cpsr_reg[4:0])] <= write_data;
+                            spsr_reg[spsr_idx(cpsr_mode)] <= write_data;
                         end
                     end
                 end else begin
@@ -170,18 +171,18 @@ module reg_bank (
     // =========================================================================
     // Combinational reads (dual port — critical for datapath timing)
     // =========================================================================
-    reg [31:0] rd_a_int;
-    reg [31:0] rd_b_int;
-    reg [31:0] rd_s_int;
+    reg [31:0] rd_a_int = 0;
+    reg [31:0] rd_b_int = 0;
+    reg [31:0] rd_s_int = 0;
 
     always @* begin
         // Read port A
         if (ra < 8)
             rd_a_int = r_low[ra];
         else if (ra < 13)
-            rd_a_int = (cpsr_reg[4:0] == 5'b10001) ? r_mid_fiq[ra-8] : r_mid[ra-8];
+            rd_a_int = (cpsr_mode == 5'b10001) ? r_mid_fiq[ra-8] : r_mid[ra-8];
         else if (ra < 15)
-            rd_a_int = r_sp_lr[bank_idx(cpsr_reg[4:0])][ra-13];
+            rd_a_int = r_sp_lr[bank_idx(cpsr_mode)][ra-13];
         else
             rd_a_int = pc_reg;               // r15 → current PC (pipeline adds +8/+4)
     end
@@ -191,31 +192,31 @@ module reg_bank (
         if (rb < 8)
             rd_b_int = r_low[rb];
         else if (rb < 13)
-            rd_b_int = (cpsr_reg[4:0] == 5'b10001) ? r_mid_fiq[rb-8] : r_mid[rb-8];
+            rd_b_int = (cpsr_mode == 5'b10001) ? r_mid_fiq[rb-8] : r_mid[rb-8];
         else if (rb < 15)
-            rd_b_int = r_sp_lr[bank_idx(cpsr_reg[4:0])][rb-13];
+            rd_b_int = r_sp_lr[bank_idx(cpsr_mode)][rb-13];
         else
             rd_b_int = pc_reg;
     end
 
     always @* begin
-        // Read port B (identical logic)
+        // Read port S (identical logic)
         if (rs < 8)
             rd_s_int = r_low[rs];
         else if (rs < 13)
-            rd_s_int = (cpsr_reg[4:0] == 5'b10001) ? r_mid_fiq[rs-8] : r_mid[rs-8];
+            rd_s_int = (cpsr_mode == 5'b10001) ? r_mid_fiq[rs-8] : r_mid[rs-8];
         else if (rs < 15)
-            rd_s_int = r_sp_lr[bank_idx(cpsr_reg[4:0])][rs-13];
+            rd_s_int = r_sp_lr[bank_idx(cpsr_mode)][rs-13];
         else
             rd_s_int = pc_reg;
     end
 
     // Output assignments
     assign rd_a      = rd_a_int;
-    assign rd_b      = PSR_rd_en ? (PSR_sel_f ? ((spsr_idx(cpsr_reg[4:0]) != -1) ? spsr_reg[spsr_idx(cpsr_reg[4:0])] : 32'b0) : cpsr_reg) : rd_b_int;
+    assign rd_b      = PSR_rd_en ? (PSR_sel_f ? ((spsr_idx(cpsr_mode) != -1) ? spsr_reg[spsr_idx(cpsr_mode)] : 32'b0) : cpsr_reg) : rd_b_int;
     assign rd_s      = rd_s_int;
     assign pc_rdata  = pc_reg;
     assign cpsr_rdata = cpsr_reg;
-    assign spsr_rdata = (spsr_idx(cpsr_reg[4:0]) != -1) ? spsr_reg[spsr_idx(cpsr_reg[4:0])] : 32'b0;
+    assign spsr_rdata = (spsr_idx(cpsr_mode) != -1) ? spsr_reg[spsr_idx(cpsr_mode)] : 32'b0;
 
 endmodule
