@@ -36,6 +36,7 @@ module reg_bank (
     input  wire [4:0]  cpsr_mode,
 
     input  wire        writeback_en,
+    input  wire        link_f,
 
     // === GPR Read Ports (r0–r15) ============================================
     input  wire [3:0]  ra,            // register A address (Rn)
@@ -173,6 +174,10 @@ module reg_bank (
             // Dedicated PC write (branches, data ops to r15, etc.)
             if (pc_we)
                 pc_reg <= incrementer_wdata;
+
+			// Dedicated PC write (branches, data ops to r15, etc.)
+            if (link_f)
+                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg;
 
             // Dedicated writeback write
             if (writeback_en) begin
