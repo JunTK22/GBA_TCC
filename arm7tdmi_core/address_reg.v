@@ -28,8 +28,8 @@ reg [31:0] address_reg = 0;
 always @(*) begin
     case (Addr_reg_sel)
         Incrementer_bus: address_i <= Incrementer; 
-        ALU_bus: address_i  <= ALU; 
-        PC_bus: address_i   <= PC; 
+        ALU_bus: address_i  <= ALU;
+        PC_bus: address_i   <= PC;
         Rn_bus: address_i   <= Rn; 
     endcase
 end
@@ -39,6 +39,8 @@ always @(posedge CLK or negedge nRST) begin
         address_reg <= 32'h0000_0000;
     end else if (Addr_reg_en) begin
         address_reg <= address_i;
+    end else begin
+        address_reg <= address_reg;
     end
 end
 

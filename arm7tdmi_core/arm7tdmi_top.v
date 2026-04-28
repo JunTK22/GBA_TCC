@@ -20,8 +20,25 @@ module arm7tdmi_top (
     input  wire        nFIQ,
     input  wire        ABORT,
 
-    // === Debug / Status outputs =============================================
-    output wire        tbit_out      // TBIT (Thumb state)
+    // === Debug outputs =============================================
+    output wire        tbit_out,      // TBIT (Thumb state)
+
+    output wire [31:0] r0,
+    output wire [31:0] r1,
+    output wire [31:0] r2,
+    output wire [31:0] r3,
+    output wire [31:0] r4,
+    output wire [31:0] r5,
+    output wire [31:0] r6,
+    output wire [31:0] r7,
+    output wire [31:0] r8,
+    output wire [31:0] r9,
+    output wire [31:0] r10,
+    output wire [31:0] r11,
+    output wire [31:0] r12,
+    output wire [31:0] r13,
+    output wire [31:0] r14,
+    output wire [31:0] r15
 );
 
     // A Bus Input Selector Params
@@ -47,6 +64,7 @@ module arm7tdmi_top (
     wire [31:0] Alu_bus;
     wire [31:0] PC_bus;
     wire [31:0] Incrementer_bus;
+    reg [31:0] wr_data;
 
     wire [31:0] CPSR;
 
@@ -61,12 +79,12 @@ module arm7tdmi_top (
     wire [3:0] condition;
     wire [3:0] opcode;
     wire [7:0] shift_data;
-    wire [3:0] register_list;
 
     wire       Set_PSR_Thumb_bit;
     wire       cond_valid;
 
     wire       core_nRW;
+    assign nRW = core_nRW;
 
     // Register Addressess
     wire [3:0] Rn_addr;
@@ -92,12 +110,14 @@ module arm7tdmi_top (
     wire        psr_wr_en;
     wire        psr_rd_en;
     wire        writeback_en;
+    wire        pc_we;
 
     // Selectors
     wire [1:0]  addr_reg_sel;
     wire [1:0]  Bus_A_sel;
     wire [2:0]  Bus_B_sel;
     wire        wr_data_reg_sel;
+    wire        increment_sel;
 
     // control flags
     wire        set_condition_f;
@@ -165,6 +185,13 @@ module arm7tdmi_top (
         endcase
     end
 
+    always @(*) begin
+        case (wr_data_reg_sel)
+            1'b0: wr_data <= Rs_data;
+            1'b1: wr_data <= Bus_B;
+        endcase
+    end
+
     b_shifter b_shifter (
         .data_i             (Bus_B),
         .Rs_shift_ammount   (Rs_data),
@@ -180,7 +207,10 @@ module arm7tdmi_top (
         .clk          (clk),
         .reset_n      (reset_n),
         .cpsr_mode    (cpsr_mode),
-        
+
+        .writeback_en    (writeback_en),
+
+
         .ra           (Rn_addr),
         .rb           (Rm_addr),
         .rd_a         (Rn_data),
@@ -202,7 +232,24 @@ module arm7tdmi_top (
         .PSR_sel_f    (psr_sel_f),
         .PSR_flags_only_f (psr_flags_only_f),
         .cpsr_rdata   (CPSR),
-        .spsr_rdata   ()
+        .spsr_rdata   (),
+
+        .r0     (r0),
+        .r1     (r1),
+        .r2     (r2),
+        .r3     (r3),
+        .r4     (r4),
+        .r5     (r5),
+        .r6     (r6),
+        .r7     (r7),
+        .r8     (r8),
+        .r9     (r9),
+        .r10    (r10),
+        .r11    (r11),
+        .r12    (r12),
+        .r13    (r13),
+        .r14    (r14),
+        .r15    (r15)
     );
 
     alu alu (
@@ -219,15 +266,18 @@ module arm7tdmi_top (
     );
 
     incrementer incrementer (
-        .addr_in  (incrementer_in),
+        .addr_reg_in  (incrementer_in),
+        .pc_in    (PC_bus),
+        .increment_sel     (increment_sel),
         .tbit     (tbit),
+        .clk      (clk),
         .addr_out (Incrementer_bus)
     );
 
     write_data_reg write_data_reg (
         .clk      (clk),
         .reset_n  (reset_n),
-        .data_in  (Bus_B),
+        .data_in  (wr_data),
         .we       (wr_data_reg_en),
         .nRW      (core_nRW),
         .data_out (DOUT),
@@ -284,7 +334,6 @@ module arm7tdmi_top (
         .Rm_o               (Rm_addr),
         .Imm_o              (Immediate_data),
         .Shift_o            (shift_data),
-        .register_list      (register_list),
         .PSR_Thumb_bit      (Set_PSR_Thumb_bit),
 
         .cond_valid         (cond_valid),
@@ -305,11 +354,13 @@ module arm7tdmi_top (
         .PSR_wr_en          (psr_wr_en),
         .PSR_rd_en          (psr_rd_en),
         .Writeback_en       (writeback_en),
+        .pc_we              (pc_we),
 
         .Addr_reg_sel       (addr_reg_sel),
         .Bus_A_sel          (Bus_A_sel),
         .Bus_B_sel          (Bus_B_sel),
         .Wr_Data_reg_sel    (wr_data_reg_sel),
+        .increment_sel      (increment_sel),
 
         .Set_condition_f    (set_condition_f),
         .Imm_Operand_f      (imm_operand_f),

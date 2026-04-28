@@ -1,0 +1,31 @@
+module sram_test (
+    input wire clk,
+    input wire we,
+    input wire [31:0] wr_data,
+    input wire [31:0] wr_addr,
+    input wire [31:0] rd_addr,
+
+    output wire [31:0] rd_data
+);
+
+wire [15:0] wr_addr_r;
+wire [15:0] rd_addr_r;
+
+assign wr_addr_r <= wr_addr[15:0];
+assign rd_addr_r <= rd_addr[15:0];
+
+reg [7:0] mem [63:0]; //
+
+initial begin
+    $readmemh("instrucoes.hex", mem);
+end
+
+always @(posedge clk) begin
+    if (we) begin
+        {mem[wr_addr_r+3], mem[wr_addr_r+2], mem[wr_addr_r+1], mem[wr_addr_r]} <= {wr_data[7:0], wr_data[15:8], wr_data[23:16], wr_data[31:24]};
+    end
+end
+
+assign rd_data = {mem[rd_addr_r+3], mem[rd_addr_r+2], mem[rd_addr_r+1], mem[rd_addr_r]};
+
+endmodule

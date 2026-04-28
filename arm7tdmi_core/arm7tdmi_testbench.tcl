@@ -1,3 +1,4 @@
+add wave -radix hex         sim:/arm7tdmi_top/A
 add wave -radix hex         sim:/arm7tdmi_top/DIN
 add wave -radix bin         sim:/arm7tdmi_top/CPSR
 add wave -radix bin         sim:/arm7tdmi_top/clk
@@ -41,6 +42,10 @@ add wave -radix decimal     sim:/arm7tdmi_top/Bus_B
 add wave -radix decimal     sim:/arm7tdmi_top/Alu_bus
 add wave -radix hex         sim:/arm7tdmi_top/PC_bus
 add wave -radix hex         sim:/arm7tdmi_top/Incrementer_bus
+
+force SW[1]  1 0 ns
+force SW[1]  0 3 ns
+force SW[0] 0 0 ns, 1 5 ns -r 10 ns
 
 force DIN    0 0 ns
 force clk   0 0 ns

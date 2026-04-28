@@ -22,50 +22,30 @@
 // =============================================================================
 
 module write_data_reg (
-    input  wire        clk,         // MCLK (phase 2 rising edge)
+    input  wire        clk,
     input  wire        reset_n,
 
-    // Data to be latched (from regfile rd_b or ALU result for SWP)
     input  wire [31:0] data_in,
 
-    // Write enable (asserted by pipeline control in execute stage of STR/STM/SWP)
     input  wire        we,
 
-    // From pipeline controller — indicates current cycle is a write
-    input  wire        nRW,         // 1 = write cycle, 0 = read cycle
+    input  wire        nRW,
 
-    // ========================================================================
-    // Outputs
-    // ========================================================================
-    output reg  [31:0] data_out,    // Registered data → DOUT[31:0] or D[31:0]
+    output reg  [31:0] data_out,
 
-    // Core output signals (exact names from datasheet)
-    output wire        nENOUT,      // Driven LOW for the entire write cycle
+    output wire        nENOUT,
 
-    // FPGA-specific tri-state control (active-HIGH for IOB output enable)
-    output wire        data_bus_oe  // Connect directly to your top-level D[31:0] IOB OE
+    output wire        data_bus_oe
 );
 
-    // =========================================================================
-    // 1. Write Data Register latch (synchronous, holds value for full cycle)
-    // =========================================================================
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             data_out <= 32'h0000_0000;
         end else if (we) begin
             data_out <= data_in;
         end
-        // When !we the register holds its previous value — required by
-        // the datasheet so that data remains stable on the bus while nRW=1
     end
 
-    // =========================================================================
-    // 2. nENOUT generation (datasheet exact behaviour)
-    // =========================================================================
-    // "During a data write cycle, this signal is driven LOW during phase 1,
-    // and remains LOW for the entire cycle."
-    // In our synchronous FPGA implementation nRW is already valid for the
-    // full memory cycle, so nENOUT = ~nRW is correct and timing-accurate.
     assign nENOUT = ~nRW;
 
 endmodule
