@@ -64,7 +64,7 @@ module arm7tdmi_top (
     wire [31:0] Alu_bus;
     wire [31:0] PC_bus;
     wire [31:0] Incrementer_bus;
-    reg [31:0] wr_data;
+    reg  [31:0] wr_data;
 
     wire [31:0] CPSR;
 
@@ -208,8 +208,8 @@ module arm7tdmi_top (
         .reset_n      (reset_n),
         .cpsr_mode    (cpsr_mode),
 
-        .writeback_en    (writeback_en),
-
+        .writeback_en	(writeback_en),
+        .link_f    		(link_f),
 
         .ra           (Rn_addr),
         .rb           (Rm_addr),
@@ -385,7 +385,8 @@ module arm7tdmi_top (
         .SP_f               (sp_f),
         .PC_LR_f            (pc_lr_f),
         .Low_High_off_f     (low_high_off_f),
-        .Shifter_reg_f      (shifter_reg_f)
+        .Shifter_reg_f      (shifter_reg_f),
+        .data_size      	(MAS)
     );
 
 endmodule
