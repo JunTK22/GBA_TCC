@@ -12,8 +12,8 @@ module b_shifter (
 
 
 reg [63:-32] result = 0;
-wire [31:-32] intermediate2;
-reg [31:-32] intermediate = 0;
+wire signed [31:-32] intermediate2;
+reg  signed [31:-32] intermediate = 0;
 wire [7:0] shift;
 
 assign shift = Imm_Operand_f ? (shift_data[3:0] << 1) : (shift_data[0] ? Rs_shift_ammount : shift_data[7:3]);
@@ -30,7 +30,7 @@ always @(*) begin
         case (shift_data[2:1])
             2'b00: begin
                 // Logical left
-					 intermediate <= 0;
+				intermediate <= 0;
                 result[63:0] <= data_i << shift;
             end
             2'b01: begin

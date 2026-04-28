@@ -35,19 +35,21 @@ module reg_bank (
     input  wire        reset_n,       // optional (PC=0 on reset, per 3.11)
     input  wire [4:0]  cpsr_mode,
 
+    input  wire        writeback_en,
+
     // === GPR Read Ports (r0–r15) ============================================
-    input  wire [3:0]  ra,            // register A address
-    input  wire [3:0]  rb,            // register B address
+    input  wire [3:0]  ra,            // register A address (Rn)
+    input  wire [3:0]  rb,            // register B address (Rm)
     output wire [31:0] rd_a,          // read data A
     output wire [31:0] rd_b,          // read data B
 
-    input  wire [3:0]  rs,            // register S address
+    input  wire [3:0]  rs,            // register S address (Rs)
     output wire [31:0] rd_s,          // read data S
 
     // === GPR Write Port =====================================================
     input  wire [3:0]  rd_addr,       // destination register (0–15)
-    input  wire [31:0] write_data,            // write data
-    input  wire        Reg_bank_en,        // write enable (from control)
+    input  wire [31:0] write_data,    // write data
+    input  wire        Reg_bank_en,   // write enable (from control)
 
     // === PC (r15) special interface =========================================
     // (pipeline adds +8 / +4 when reading r15 — see 3.7 and 10.x timing)
@@ -62,11 +64,32 @@ module reg_bank (
     input  wire        PSR_flags_only_f,
     output wire [31:0] cpsr_rdata,
 
-    output wire [31:0] spsr_rdata     // SPSR of current mode (control prevents user mode)
+    output wire [31:0] spsr_rdata,     // SPSR of current mode (control prevents user mode)
+
+    // Debug outputs 
+    
+    output wire [31:0] r0,
+    output wire [31:0] r1,
+    output wire [31:0] r2,
+    output wire [31:0] r3,
+    output wire [31:0] r4,
+    output wire [31:0] r5,
+    output wire [31:0] r6,
+    output wire [31:0] r7,
+    output wire [31:0] r8,
+    output wire [31:0] r9,
+    output wire [31:0] r10,
+    output wire [31:0] r11,
+    output wire [31:0] r12,
+    output wire [31:0] r13,
+    output wire [31:0] r14,
+    output wire [31:0] r15
 );
 
     wire [31:0] cpsr_wdata;
     wire [31:0] spsr_wdata;
+
+    reg  [31:0] writeback_reg;
 
     // =========================================================================
     // Internal storage — exactly the 31 GPR + 6 status registers
@@ -151,6 +174,22 @@ module reg_bank (
             if (pc_we)
                 pc_reg <= incrementer_wdata;
 
+            // Dedicated writeback write
+            if (writeback_en) begin
+                if (ra < 8) begin
+                    r_low[ra] <= writeback_reg;
+                end else if (ra < 13) begin
+                    if (cpsr_mode == 5'b10001) // FIQ
+                        r_mid_fiq[ra-8] <= writeback_reg;
+                    else
+                        r_mid[ra-8] <= writeback_reg;
+                end else if (ra < 15) begin
+                    r_sp_lr[bank_idx(cpsr_mode)][ra-13] <= writeback_reg;
+                end else if (ra == 15) begin
+                    pc_reg <= writeback_reg;
+                end
+            end
+
             // CPSR/SPSR write (MSR, exception entry, etc.)
             if (PSR_wr_en) begin
                 if (PSR_sel_f) begin
@@ -166,6 +205,12 @@ module reg_bank (
                 end
             end
         end
+    end
+
+    //Writeback
+    
+    always @(posedge clk) begin
+        writeback_reg <= write_data;
     end
 
     // =========================================================================
@@ -218,5 +263,24 @@ module reg_bank (
     assign pc_rdata  = pc_reg;
     assign cpsr_rdata = cpsr_reg;
     assign spsr_rdata = (spsr_idx(cpsr_mode) != -1) ? spsr_reg[spsr_idx(cpsr_mode)] : 32'b0;
+
+    // Debug
+    
+    assign r0   = r_low[0];
+    assign r1   = r_low[1];
+    assign r2   = r_low[2];
+    assign r3   = r_low[3];
+    assign r4   = r_low[4];
+    assign r5   = r_low[5];
+    assign r6   = r_low[6];
+    assign r7   = r_low[7];
+    assign r8   = r_mid[0];
+    assign r9   = r_mid[1];
+    assign r10  = r_mid[2];
+    assign r11  = r_mid[3];
+    assign r12  = r_mid[4];
+    assign r13  = r_sp_lr[bank_idx(cpsr_mode)][0];   
+    assign r14  = r_sp_lr[bank_idx(cpsr_mode)][1];
+    assign r15  = pc_reg;
 
 endmodule

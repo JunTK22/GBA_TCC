@@ -104,12 +104,12 @@ module alu (
             4'b0110: begin // SBC   op_a - op_b - ~C
                 is_arithmetic = 1'b1;
                 effective_a   = op_a;
-                effective_b   = ~op_b;
+                effective_b   = ~op_b + 32'b1;
                 adder_cin     = cpsr_c;
             end
             4'b0111: begin // RSC   op_b - op_a - ~C
                 is_arithmetic = 1'b1;
-                effective_a   = ~op_a;
+                effective_a   = ~op_a + 32'b1;
                 effective_b   = op_b;
                 adder_cin     = cpsr_c;
             end
