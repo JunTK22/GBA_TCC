@@ -656,23 +656,39 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 				end
 				// Thumb Instructions
 				Mv_Shift_Reg: begin
-					opcode_o		<= instruct_reg[12:11];
+					Reg_bank_en  	<= 1;
+					B_shifter_en 	<= 1;
+
+					opcode_o		<= 4'b1101; // MOV
 					Rd_o			<= instruct_reg[2:0];
-					Rs_o			<= instruct_reg[5:3];
-					Imm_o			<= instruct_reg[10:6];
+					Rm_o			<= instruct_reg[5:3]; // Rs in datasheet
+					Shift_o			<= {instruct_reg[10:6], instruct_reg[12:11], 1'b0}; // {Offset, shift type, shift immediate sel}
 				end
 				Add_Sub: begin
 					Imm_Operand_f 	<= instruct_reg[10];
 
-					opcode_o		<= instruct_reg[9];
-					Rn_o			<= instruct_reg[8:6];
+					Reg_bank_en  	<= 1;
+					Bus_B_sel 		<= instruct_reg[10] ? Immediate : Rm;
+
+					opcode_o		<= instruct_reg[9] ? 4'b0010 : 4'b0100; // SUB : ADD
 					Rd_o			<= instruct_reg[2:0];
-					Rs_o			<= instruct_reg[5:3];
+					Rn_o			<= instruct_reg[5:3]; // Rs in datasheet
+					Rm_o			<= instruct_reg[8:6]; // Rn in datasheet
 					Imm_o			<= instruct_reg[8:6];
 				end
 				Imm_Op: begin
-					opcode_o		<= instruct_reg[12:11];
+					case (instruct_reg[12:11])
+						'b00: opcode_o <= 4'b1101; // MOV
+						'b01: opcode_o <= 4'b1010; // CMP
+						'b10: opcode_o <= 4'b0100; // ADD
+						'b11: opcode_o <= 4'b0010; // SUB
+					endcase
+
+					Reg_bank_en  	<= 1;
+					Bus_B_sel 		<= Immediate;
+
 					Rd_o			<= instruct_reg[10:8];
+					Rn_o			<= instruct_reg[10:8]; // Rs in datasheet
 					Imm_o			<= instruct_reg[7:0];
 				end
 				Alu_OP: begin
