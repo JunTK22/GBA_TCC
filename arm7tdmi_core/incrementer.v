@@ -37,7 +37,7 @@ module incrementer (
 );
 
     always @(negedge clk) begin
-        addr_out = (increment_sel ? addr_reg_in : pc_in) + (tbit ? 32'd1 : 32'd2);        
+        addr_out = (increment_sel ? addr_reg_in : pc_in) + (tbit ? 32'd2 : 32'd4);        
     end
 
 endmodule
