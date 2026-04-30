@@ -34,7 +34,6 @@ module sram #(
     parameter DEPTH_POW2 = 10           // 2^10 = 1024 words = 4 KB
 )(
     input  wire                       clk,
-    input  wire                       rst_n,          // active-low sync reset
 
     // CPU interface
     input  wire [DEPTH_POW2+1 : 0]    addr,           // byte address
@@ -204,13 +203,8 @@ module sram #(
     //  Output register (this one CAN have a reset — it's outside the RAM)
     // -------------------------------------------------------------------------
     always @(*) begin
-        if (!rst_n) begin
-            rdata          <= 32'h0;
-            misalign_fault <= 1'b0;
-        end else begin
-            rdata          <= rdata_next;
-            misalign_fault <= misalign_q & we_q;
-        end
+        rdata          <= rdata_next;
+        misalign_fault <= misalign_q & we_q;
     end
 
 endmodule
