@@ -64,7 +64,7 @@ module arm7tdmi_top (
     wire [31:0] Alu_bus;
     wire [31:0] PC_bus;
     wire [31:0] Incrementer_bus;
-    reg  [31:0] wr_data;
+    reg [31:0] wr_data;
 
     wire [31:0] CPSR;
 
@@ -208,8 +208,8 @@ module arm7tdmi_top (
         .reset_n      (reset_n),
         .cpsr_mode    (cpsr_mode),
 
-        .writeback_en	(writeback_en),
-        .link_f    		(link_f),
+        .writeback_en    (writeback_en),
+
 
         .ra           (Rn_addr),
         .rb           (Rm_addr),
@@ -227,7 +227,8 @@ module arm7tdmi_top (
         .incrementer_wdata (Incrementer_bus),
         .pc_rdata     (PC_bus),
 
-        .PSR_wr_en    (psr_wr_en),
+        .nzcv         (nzcv),
+        .Set_condition_f (set_condition_f),
         .PSR_rd_en    (psr_rd_en),
         .PSR_sel_f    (psr_sel_f),
         .PSR_flags_only_f (psr_flags_only_f),
@@ -315,9 +316,10 @@ module arm7tdmi_top (
     decoder decoder (
         .Data_i             (DIN),
         .PSR                (CPSR),
-        .Rn0_Thumb          (Rm_data[0]),   // bit[0] of Rn for BX/Thumb
         .CLK                (clk),
+        .Rn0_Thumb          (Rm_data[0]),   // bit[0] of Rn for BX/Thumb
         .pipeline_rst_n     (reset_n),
+        .addr_odd           (A[1]),
 
         .nIRQ               (nIRQ),
         .nFIQ               (nFIQ),
@@ -385,8 +387,7 @@ module arm7tdmi_top (
         .SP_f               (sp_f),
         .PC_LR_f            (pc_lr_f),
         .Low_High_off_f     (low_high_off_f),
-        .Shifter_reg_f      (shifter_reg_f),
-        .data_size      	(MAS)
+        .Shifter_reg_f      (shifter_reg_f)
     );
 
 endmodule
