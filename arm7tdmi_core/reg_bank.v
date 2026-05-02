@@ -54,6 +54,7 @@ module reg_bank (
     // === PC (r15) special interface =========================================
     // (pipeline adds +8 / +4 when reading r15 — see 3.7 and 10.x timing)
     input  wire        pc_we,
+    input  wire        link_f,
     input  wire [31:0] incrementer_wdata,
     output wire [31:0] pc_rdata,      // current PC value
 
@@ -68,8 +69,7 @@ module reg_bank (
 
     output wire [31:0] spsr_rdata,     // SPSR of current mode (control prevents user mode)
 
-    // Debug outputs 
-    
+    // Debug outputs     
     output wire [31:0] r0,
     output wire [31:0] r1,
     output wire [31:0] r2,
@@ -90,8 +90,6 @@ module reg_bank (
 
     wire [31:0] cpsr_wdata;
     wire [31:0] spsr_wdata;
-
-    reg  [31:0] writeback_reg;
 
     // =========================================================================
     // Internal storage — exactly the 31 GPR + 6 status registers
@@ -176,19 +174,22 @@ module reg_bank (
             if (pc_we)
                 pc_reg <= incrementer_wdata;
 
+            if (link_f)
+                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg;
+
             // Dedicated writeback write
             if (writeback_en) begin
                 if (ra < 8) begin
-                    r_low[ra] <= writeback_reg;
+                    r_low[ra] <= incrementer_wdata;
                 end else if (ra < 13) begin
                     if (cpsr_mode == 5'b10001) // FIQ
-                        r_mid_fiq[ra-8] <= writeback_reg;
+                        r_mid_fiq[ra-8] <= incrementer_wdata;
                     else
-                        r_mid[ra-8] <= writeback_reg;
+                        r_mid[ra-8] <= incrementer_wdata;
                 end else if (ra < 15) begin
-                    r_sp_lr[bank_idx(cpsr_mode)][ra-13] <= writeback_reg;
+                    r_sp_lr[bank_idx(cpsr_mode)][ra-13] <= incrementer_wdata;
                 end else if (ra == 15) begin
-                    pc_reg <= writeback_reg;
+                    pc_reg <= incrementer_wdata;
                 end
             end
 
@@ -211,12 +212,6 @@ module reg_bank (
                 cpsr_reg[31:28] <= nzcv;
             end
         end
-    end
-
-    //Writeback
-    
-    always @(posedge clk) begin
-        writeback_reg <= write_data;
     end
 
     // =========================================================================

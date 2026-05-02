@@ -64,7 +64,6 @@ module decoder(
 	output reg			HW_Byte_f = 0,
 	output reg			Load_f = 0,
 	output reg			Pre_Pos_Indx_f = 0,
-	output reg			Pre_Pos_Inc_f = 0,
 	output reg			Up_Down_f = 0,
 	output reg			Write_Back_f = 0,
 	output reg			L_PSR_UserMode_f = 0,
@@ -85,12 +84,12 @@ module decoder(
 parameter	Incrementer_bus = 2'b00;
 parameter	ALU_bus = 2'b01;
 parameter	PC_bus  = 2'b10;
-parameter	Rn_bus	= 2'b11; // Used to feed Addr register Rn directly if necessary during Load/Store instructions
+parameter	Rn_bus	= 2'b11;
 
 // A Bus Input Selector Params
 parameter	Rn = 2'b00;
 parameter	Rs = 2'b01;
-parameter	Multiplier  = 2'b10;
+parameter	Writeback  = 2'b10;
 
 // B Bus Input Selector Params
 parameter	Rm = 3'b000;
@@ -193,6 +192,25 @@ wire [4:0] reg_list_ones;
 assign reg_list_ones	=	instruct_reg[0]+instruct_reg[1]+instruct_reg[2]+instruct_reg[3]+instruct_reg[4]+instruct_reg[5]+instruct_reg[6]+instruct_reg[7]+instruct_reg[8]+
 							instruct_reg[9]+instruct_reg[10]+instruct_reg[11]+instruct_reg[12]+instruct_reg[13]+instruct_reg[14]+instruct_reg[15];
 
+// Listing registers for Block Load/Store instruction 
+reg [3:0]  i15 = 0;
+reg [7:0]  i14 = 0;
+reg [11:0] i13 = 0;
+reg [15:0] i12 = 0;
+reg [19:0] i11 = 0;
+reg [23:0] i10 = 0;
+reg [27:0] i9  = 0;
+reg [31:0] i8  = 0;
+reg [35:0] i7  = 0;
+reg [39:0] i6  = 0;
+reg [43:0] i5  = 0;
+reg [47:0] i4  = 0;
+reg [51:0] i3  = 0;
+reg [55:0] i2  = 0;
+reg [59:0] i1  = 0;
+reg [63:0] i0  = 0;
+////////////////////////////////////////////////////////////
+
 assign special_flow = cycle_count[1:0];
 
 assign nMREQ	= cycles_types[1];
@@ -263,7 +281,7 @@ always @(instruct_reg) begin
 			//Data Processing
 			if (instruct_reg[25:23] == 3'b010 && instruct_reg[21:16] == 6'b001111) begin
 				Inst_decoded = MRS;
-			end else if (instruct_reg[24:23] == 2'b10 && instruct_reg[21:12] == 10'b1010011111) begin
+			end else if (instruct_reg[24:23] == 2'b10 && instruct_reg[21:17] == 5'b10100 && instruct_reg[15:12] == 4'b1111) begin
 				Inst_decoded = MSR;
 			end else begin
 				Inst_decoded = DP;
@@ -329,7 +347,6 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 		HW_Byte_f		 <= 0;
 		Load_f			 <= 0;
 		Pre_Pos_Indx_f	 <= 0;
-		Pre_Pos_Inc_f	 <= 0;
 		Up_Down_f		 <= 0;
 		Write_Back_f	 <= 0;
 		L_PSR_UserMode_f <= 0;
@@ -388,7 +405,6 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 		HW_Byte_f		 <= 0;
 		Load_f			 <= 0;
 		Pre_Pos_Indx_f	 <= 0;
-		Pre_Pos_Inc_f	 <= 0;
 		Up_Down_f		 <= 0;
 		Write_Back_f	 <= 0;
 		L_PSR_UserMode_f <= 0;
@@ -447,7 +463,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Imm_Operand_f	<= instruct_reg[25];
 					Shifter_reg_f	<= instruct_reg[4];
 	
-					Reg_bank_en		<= (instruct_reg[24:21] == 4'b1000 || instruct_reg[24:21] == 4'b1001 || instruct_reg[24:21] == 4'b1010 || instruct_reg[24:21] == 4'b1011) ? 0 : 1;
+					Reg_bank_en		<= (instruct_reg[24:21] == 4'b1000 || instruct_reg[24:21] == 4'b1001 || instruct_reg[24:21] == 4'b1010 || instruct_reg[24:21] == 4'b1011) ? 1'b0 : 1'b1;
 					B_shifter_en	<= 1;
 					Bus_B_sel		<= instruct_reg[25] ? Immediate : Rm;
 	
@@ -533,12 +549,13 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 
 					Wr_Data_reg_en	<= 1'b1;
 					Addr_reg_sel	<= Rn_bus; // Addr_reg receives RN to read mem
-					Bus_B_sel 		<= Rm;
-					Wr_Data_reg_sel <= Bus_B;
+					Bus_B_sel 		<= Data_reg_in;
+					Wr_Data_reg_sel <= Reg_Bank;
 
 					Rn_o			<= instruct_reg[19:16];
 					Rd_o			<= instruct_reg[15:12];
 					Rm_o			<= instruct_reg[3:0];
+					Rs_o			<= instruct_reg[3:0];
 				end
 				BranchX: begin
 					cycle_count 	<= 3'b111;
@@ -552,7 +569,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Rm_o			<= instruct_reg[3:0];
 				end
 				HW_LS: begin
-					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 2'b11;
+					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 3'b111;
 					cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {S,N,I}) : {N,N};
 
 					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
@@ -578,7 +595,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Imm_o			<= {instruct_reg[11:8], instruct_reg[3:0]};
 				end
 				SD_LS: begin
-					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 2'b11;
+					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 3'b111;
 					cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {S,N,I}) : {N,N};
 
 					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
@@ -611,21 +628,30 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 
 				end
 				BD_LS: begin
-					cycle_count		<=	(instruct_reg[20] ? (instruct_reg[15] ? 4'b1111 : 4'b0011) : 4'b0001) << reg_list_ones | ((8'b0 | 1'b1) << reg_list_ones)-1'b1;
+					cycle_count		<=	(instruct_reg[20] ? (instruct_reg[15] ? 4'b1111 : 4'b0011) : 4'b0011) << reg_list_ones | ((8'b0 | 1'b1) << reg_list_ones)-1'b1;
 					cycles_types	<=	instruct_reg[20] ? (instruct_reg[15] ? {S,N,N,I} : {N,I}) : {N,N};
 
 					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
 					Load_f			<= instruct_reg[20];
-					Pre_Pos_Inc_f	<= instruct_reg[24];
+					Pre_Pos_Indx_f	<= instruct_reg[24];
 					Up_Down_f		<= instruct_reg[23];
 					Write_Back_f	<= instruct_reg[21];
 					L_PSR_UserMode_f<= instruct_reg[22];
 					wait_f			<= 1;
 
-					Addr_reg_sel <= Rn_bus;
+					// Add/Sub Rn +- Offset into Addr register if pre indexing. The sum is always written into a Writeback_reg.
+					// If post indexing, Addr register receives Rn through PC_bus
+					Wr_Data_reg_en	<= instruct_reg[20] ? 1'b0 : 1'b1;
+					Addr_reg_sel	<= instruct_reg[24] ? ALU_bus : Rn_bus; // Addr_reg, if post indexing, receives Rn
+					Bus_A_sel 		<= Rn;
+					Bus_B_sel 		<= Immediate;
+					Wr_Data_reg_sel <= Reg_Bank;
 
+					Rd_o			<= i0[3:0];
 					Rn_o			<= instruct_reg[19:16];
-					register_list	<= i0;
+					Rs_o			<= i0[3:0];
+					Imm_o			<= 24'd4;
+					register_list	<= instruct_reg[20] ? i0 : i0 >> 4;
 				end
 				Branch: begin
 					cycle_count		<= 3'b111;
@@ -790,9 +816,9 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					
 					Reg_bank_en 	<= 1;
 
-					Rd_o			<= instruct_reg[7] ? instruct_reg[2:0]+'d8 : instruct_reg[2:0]; // Hd/Rd
-					Rn_o			<= instruct_reg[7] ? instruct_reg[2:0]+'d8 : instruct_reg[2:0]; // Hd/Rd in datasheet
-					Rm_o			<= instruct_reg[6] ? instruct_reg[5:3]+'d8 : instruct_reg[5:3]; // Hs/Rs in datasheet
+					Rd_o			<= instruct_reg[7] ? instruct_reg[2:0]+4'd8 : instruct_reg[2:0]; // Hd/Rd
+					Rn_o			<= instruct_reg[7] ? instruct_reg[2:0]+4'd8 : instruct_reg[2:0]; // Hd/Rd in datasheet
+					Rm_o			<= instruct_reg[6] ? instruct_reg[5:3]+4'd8 : instruct_reg[5:3]; // Hs/Rs in datasheet
 				end
 				Pc_r_L: begin
 					cycle_count		<= 3'b111;
@@ -808,7 +834,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Imm_o			<= {instruct_reg[7:0], 2'b00};
 				end
 				LS_Reg_Off: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
 					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Rm (Offset)
@@ -825,7 +851,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Rm_o			<= instruct_reg[8:6];
 				end
 				LS_SignEx_HW: begin
-					cycle_count		<= instruct_reg[11] || instruct_reg[10] ? 3'b111 : 2'b11;
+					cycle_count		<= instruct_reg[11] || instruct_reg[10] ? 3'b111 : 3'b111;
 					cycles_types	<= instruct_reg[11] || instruct_reg[10] ? {S,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Rm (Offset)
@@ -843,7 +869,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Rm_o			<= instruct_reg[5:3];
 				end
 				LS_Imm_Off: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
 					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Imm (Offset)
@@ -860,7 +886,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Imm_o			<= instruct_reg[12] ? instruct_reg[10:6] : {instruct_reg[10:6], 2'b00};
 				end
 				HW_LS_T: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
 					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Imm (Offset)
@@ -876,7 +902,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Imm_o			<= instruct_reg[10:6];
 				end
 				SP_rel_LS: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
 					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Imm (Offset)
@@ -990,20 +1016,30 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 				end
 			end
 			SD_Swap: begin
-				Wr_Data_reg_en	<= 1'b0;
-				Reg_bank_en <= (cycle_count[2:1] == 2'b01) ? 1'b1 : 1'b0;
+				Wr_Data_reg_en	<= 0;
+				Reg_bank_en 	<= 0;
+				core_nRW 		<= 0;
 
-				Addr_reg_sel <= Incrementer_bus;
-				core_nRW <= (cycle_count[3:2] == 2'b01) ? 1'b1 : 1'b0;
+				if (cycle_count[3:2] == 2'b01) begin
+					Reg_bank_en  <= 1;
+					core_nRW 	 <= 1;
+					Addr_reg_sel <= PC_bus;
+				end else if (cycle_count[2:1] == 2'b01) begin
+					MAS <= 2'b10;
+					Addr_reg_sel <= Incrementer_bus;
+				end
 			end
 			BranchX: begin
 				Reg_bank_en		<= 0;
+				B_shifter_en	<= 0;
 				PSR_Thumb_bit	<= Rn0_Thumb;
+				Addr_reg_sel 	<= Incrementer_bus;
 			end
 			Branch: begin
+				Link_f			<= 0;
 				Reg_bank_en		<= 0;
 				B_shifter_en	<= 0;
-				Link_f			<= 0;
+				Addr_reg_sel 	<= Incrementer_bus;
 			end
 			HW_LS: begin
 				Writeback_en <= Pre_Pos_Indx_f ? (Write_Back_f ? 1'b1 : 1'b0) : 1'b1;
@@ -1029,17 +1065,26 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 						default: begin
 						end
 					endcase
-				end else if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Writeback_en <= 0;
-					B_shifter_en <= 0;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				end else if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						MAS <= 2'b10;
+						Reg_bank_en <= 1;
+						Writeback_en <= 0;
+						B_shifter_en <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
 					Writeback_en <= 0;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						MAS <= 2'b10;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			SD_LS: begin
@@ -1066,44 +1111,59 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 						default: begin
 						end
 					endcase
-				end else if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Writeback_en <= 0;
-					B_shifter_en <= 0;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				end else if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						MAS <= 2'b10;
+						Reg_bank_en <= 1;
+						Writeback_en <= 0;
+						B_shifter_en <= 0;
+						Wr_Data_reg_en <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						MAS <= 2'b10;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			BD_LS: begin
-				Writeback_en <= wait_f ? (Pre_Pos_Indx_f ? (Write_Back_f ? 1'b1 : 1'b0) : 1'b1) : 0;
+				Writeback_en <= Write_Back_f ? 1'b1 : 1'b0;
+				Addr_reg_sel <= Incrementer_bus;
+				increment_sel <= Address_reg;
 				wait_f <= 0;
 
-				if (cycle_count[2:1] == 2'b01) begin
-					Addr_reg_sel <= PC_bus;				
-					increment_sel <= Address_reg;
-				end else begin
-					Addr_reg_sel <= Incrementer_bus;
-					increment_sel <= PC;
-				end
-				
 				if (Load_f && ~wait_f) begin
 					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					
 					Reg_bank_en <= 1;
 					B_shifter_en <= 0;
-					Addr_reg_sel <= Incrementer_bus;
 					Bus_B_sel <= Data_reg_in;
-
 					Rd_o <= register_list[3:0];
 					register_list <= register_list >> 4;
-				end else begin
-					Rd_o <= register_list[3:0];
+				end else if (~Load_f) begin
+					Rs_o <= register_list[3:0];
 					register_list <= register_list >> 4;
 					core_nRW <= 1;
+				end
+
+				if (cycle_count[3:2] == 2'b01) begin
+					Addr_reg_sel <= PC_bus;
+					Wr_Data_reg_en <= 0;
+					if (Pre_Pos_Indx_f) begin
+						Writeback_en <= 0;
+					end
+				end else if (cycle_count[2:1] == 2'b01) begin
+					core_nRW <= 0;
+					Writeback_en <= 0;
+					Wr_Data_reg_en <= 0;
+					Addr_reg_sel <= Incrementer_bus;
+					increment_sel <= PC;
 				end
 			end
 			Alu_OP: begin
@@ -1115,6 +1175,7 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 				PSR_Thumb_bit	<= Rn0_Thumb;
 			end
 			Pc_r_L: begin
+				Addr_reg_sel <= PC_bus;
 				if (cycle_count[2:1] == 2'b01) begin
 					opcode_o <= MOV; // Mov Rd <- Data_reg_in
 					Reg_bank_en <= 1;
@@ -1123,58 +1184,93 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 				end
 			end
 			LS_Reg_Off: begin
-				if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						Reg_bank_en <= 1;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			LS_SignEx_HW: begin
-				if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						Reg_bank_en <= 1;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			LS_Imm_Off: begin
-				if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						Reg_bank_en <= 1;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			HW_LS_T: begin
-				if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						Reg_bank_en <= 1;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			SP_rel_LS: begin
-				if (Load_f && cycle_count[2:1] == 2'b01) begin
-					opcode_o <= MOV; // Mov Rd <- Data_reg_in
-					Reg_bank_en <= 1;
-					Addr_reg_sel <= Incrementer_bus;
-					Bus_B_sel <= Data_reg_in;
+				if (Load_f) begin
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						Reg_bank_en <= 1;
+						Addr_reg_sel <= Incrementer_bus;
+						Bus_B_sel <= Data_reg_in;
+					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
-					Addr_reg_sel <= Incrementer_bus;
+					Addr_reg_sel <= PC_bus;
+					if (cycle_count[2:1] == 2'b01) begin
+						core_nRW <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+					end
 				end
 			end
 			default: begin
@@ -1186,8 +1282,8 @@ end
 
 always @(*) begin
 	case (Inst_decoded_o)
-		SD_Swap: Addr_reg_en <= ((cycle_count[1:0] == 2'b01) ? 1'b1 : 1'b0) || cycle_count[3];
-		HW_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : ((cycle_count[2:1] == 2'b01) ? 1'b0 : 1'b1);
+		SD_Swap: Addr_reg_en <= cycle_count[3] || cycle_count[1] || cycle_count[0];
+		HW_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
 		SD_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
 		BD_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;			
 		Pc_r_L: Addr_reg_en <= 1'b1;
@@ -1198,60 +1294,51 @@ always @(*) begin
 		default: Addr_reg_en <= (cycles_types[1:0] == S || cycles_types[1:0] == N) ? 1'b1 : 1'b0;
 	endcase
 
-	pipeline_halt_r <= (!cycle_count[1] || cycles_types[1:0] == S) ? 1'b0 : 1'b1;
-end
-
-assign	pc_we = (Addr_reg_sel == Incrementer_bus && increment_sel == PC && Addr_reg_en) ? 1 : 0;
-
-// Listing registers for Block Load/Store instruction 
-reg [3:0]  i15;
-reg [7:0]  i14;
-reg [11:0] i13;
-reg [15:0] i12;
-reg [19:0] i11;
-reg [23:0] i10;
-reg [27:0] i9;
-reg [31:0] i8;
-reg [35:0] i7;
-reg [39:0] i6;
-reg [43:0] i5;
-reg [47:0] i4;
-reg [51:0] i3;
-reg [55:0] i2;
-reg [59:0] i1;
-reg [63:0] i0;
-
-always @(*) begin
-	if (thumb_state) begin
-		i15 <= instruct_reg[15] ?  4'd15 : 4'd0;
-		i14 <= instruct_reg[14] ? {4'd14, i15} : i15;
-		i13 <= instruct_reg[13] ? {4'd13, i14} : i14;
-		i12 <= instruct_reg[12] ? {4'd12, i13} : i13;
-		i11 <= instruct_reg[11] ? {4'd11, i12} : i12;
-		i10 <= instruct_reg[10] ? {4'd10, i11} : i11;
-		i9  <= instruct_reg[9]  ? {4'd9,  i10} : i10;
-		i8  <= instruct_reg[8]  ? {4'd8,  i9}  : i9;
-		i7  <= instruct_reg[7]  ? {4'd7,  i8}  : i8;
-		i6  <= instruct_reg[6]  ? {4'd6,  i7}  : i7;
-		i5  <= instruct_reg[5]  ? {4'd5,  i6}  : i6;
-		i4  <= instruct_reg[4]  ? {4'd4,  i5}  : i5;
-		i3  <= instruct_reg[3]  ? {4'd3,  i4}  : i4;
-		i2  <= instruct_reg[2]  ? {4'd2,  i3}  : i3;
-		i1  <= instruct_reg[1]  ? {4'd1,  i2}  : i2;
-		i0  <= instruct_reg[0]  ? {4'd0,  i1}  : i1;
+	if (Inst_decoded_o == BD_LS) begin
+		pipeline_halt_r <= (!cycle_count[1]) ? 1'b0 : 1'b1;
 	end else begin
-		i8  <= instruct_reg[7] ?  4'd1 : 4'd0;
-		i7  <= instruct_reg[7]  ? {4'd7,  i8}  : i8;
-		i6  <= instruct_reg[6]  ? {4'd6,  i7}  : i7;
-		i5  <= instruct_reg[5]  ? {4'd5,  i6}  : i6;
-		i4  <= instruct_reg[4]  ? {4'd4,  i5}  : i5;
-		i3  <= instruct_reg[3]  ? {4'd3,  i4}  : i4;
-		i2  <= instruct_reg[2]  ? {4'd2,  i3}  : i3;
-		i1  <= instruct_reg[1]  ? {4'd1,  i2}  : i2;
-		i0  <= instruct_reg[0]  ? {4'd0,  i1}  : i1;
+		pipeline_halt_r <= (!cycle_count[1] || cycles_types[1:0] == S) ? 1'b0 : 1'b1;
 	end
 end
 
+assign	pc_we = (Addr_reg_sel == Incrementer_bus && increment_sel == PC && Addr_reg_en) ? 1'b1 : 1'b0;
 
+always @(*) begin
+	if (~thumb_state) begin
+		i15 = instruct_reg[15] ?  4'd15 : 4'd0;
+		i14 = instruct_reg[14] ? {i15, 4'd14} : i15;
+		i13 = instruct_reg[13] ? {i14, 4'd13} : i14;
+		i12 = instruct_reg[12] ? {i13, 4'd12} : i13;
+		i11 = instruct_reg[11] ? {i12, 4'd11} : i12;
+		i10 = instruct_reg[10] ? {i11, 4'd10} : i11;
+		i9  = instruct_reg[9]  ? {i10, 4'd9}  : i10;
+		i8  = instruct_reg[8]  ? {i9,  4'd8}  : i9;
+		i7  = instruct_reg[7]  ? {i8,  4'd7}  : i8;
+		i6  = instruct_reg[6]  ? {i7,  4'd6}  : i7;
+		i5  = instruct_reg[5]  ? {i6,  4'd5}  : i6;
+		i4  = instruct_reg[4]  ? {i5,  4'd4}  : i5;
+		i3  = instruct_reg[3]  ? {i4,  4'd3}  : i4;
+		i2  = instruct_reg[2]  ? {i3,  4'd2}  : i3;
+		i1  = instruct_reg[1]  ? {i2,  4'd1}  : i2;
+		i0  = instruct_reg[0]  ? {i1,  4'd0}  : i1;
+	end else begin
+		i15 = 0;
+		i14 = 0;
+		i13 = 0;
+		i12 = 0;
+		i11 = 0;
+		i10 = 0;
+		i9  = 0;
+		i8  = instruct_reg[7] ?  {28'd0, 4'd1} : 32'd0;
+		i7  = instruct_reg[7]  ? {i8, 4'd7}  : i8;
+		i6  = instruct_reg[6]  ? {i7, 4'd6}  : i7;
+		i5  = instruct_reg[5]  ? {i6, 4'd5}  : i6;
+		i4  = instruct_reg[4]  ? {i5, 4'd4}  : i5;
+		i3  = instruct_reg[3]  ? {i4, 4'd3}  : i4;
+		i2  = instruct_reg[2]  ? {i3, 4'd2}  : i3;
+		i1  = instruct_reg[1]  ? {i2, 4'd1}  : i2;
+		i0  = instruct_reg[0]  ? {i1, 4'd0}  : i1;
+	end
+end
 
 endmodule
