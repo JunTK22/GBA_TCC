@@ -4,8 +4,13 @@ module sram_test (
     input wire [31:0] wr_data,
     input wire [31:0] addr,
 
+    input wire [1:0]  size,
+    input wire        sign_extend;
+
     output wire [31:0] rd_data
 );
+
+parameter DEPTH_POW2 = 10;
 
 wire [12:0] addr_lo;
 wire [12:0] addr_hi;
@@ -14,16 +19,22 @@ assign addr_lo = addr[12:0];
 assign addr_hi = addr[12:0]+1'h1;
 
 sram sram(
-    .address_a(addr_lo),
-    .address_b(addr_hi),
-    .clock(~clk),
-    .data_a(wr_data[15:0]),
-    .data_b(wr_data[31:16]),
-    .wren_a(we),
-    .wren_b(we),
-    .q_a(rd_data[15:0]),
-    .q_b(rd_data[31:16])
+    .DEPTH_POW2 (DEPTH_POW2)           // 2^10 = 1024 words = 4 KB
+
+    .clk (clk),
+
+    .addr (addr[DEPTH_POW2+1:0]),           // byte address
+    .wdata (wr_data),          // write data (right-aligned)
+    .rdata (rd_data),          // read  data (right-aligned)
+    .we (we),             // write enable
+    .size (size),           // 00=byte 01=half 10=word
+    .sign_extend (sign_extend),    // sign-extend on read
+
+    .ready (),          // 1 unless fault
+    .misalign_fault ()  // alignment error flag
 );
+
+
 
 //reg [15:0] mem [0:6000];
 //reg [31:0] rd_data_r = 0;

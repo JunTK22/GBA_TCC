@@ -15,6 +15,8 @@ module arm7tdmi_top (
 
     output wire        nENOUT,
 
+    output wire        sign_f,
+
     // === Interrupts & Abort (Section 3.9) ===================================
     input  wire        nIRQ,
     input  wire        nFIQ,
@@ -44,8 +46,6 @@ module arm7tdmi_top (
     // A Bus Input Selector Params
     parameter	Rn = 2'b00;
     parameter	Rs = 2'b01;
-    //parameter	Multiplier_Lo  = 2'b10;
-    //parameter	Multiplier_Hi  = 2'b11;
 
     // B Bus Input Selector Params
     parameter	Rm = 3'b000;
@@ -124,12 +124,10 @@ module arm7tdmi_top (
     wire        imm_operand_f;
     wire        acumulate_f;
     wire        mult_long_f;
-    wire        sign_f;
     wire        byte_word_f;
     wire        hw_byte_f;
     wire        load_f;
     wire        pre_pos_indx_f;
-    wire        pre_pos_inc_f;
     wire        up_down_f;
     wire        write_back_f;
     wire        l_psr_usermode_f;
@@ -160,8 +158,6 @@ module arm7tdmi_top (
 
 ///////////////////////////////////////
 
-    wire [31:0] incrementer_in;
-
     wire [31:0] Multi_result_lo;
     wire [31:0] Multi_result_hi;
 
@@ -169,8 +165,7 @@ module arm7tdmi_top (
         case (Bus_A_sel)
             Rn: Bus_A <= Rn_data;
             Rs: Bus_A <= Rs_data;
-            Multiplier_Lo[1:0]: Bus_A <= Multi_result_lo;
-            Multiplier_Hi[1:0]: Bus_A <= Multi_result_hi;
+            default: Bus_A <= Rn_data;
         endcase
     end
 
@@ -194,7 +189,7 @@ module arm7tdmi_top (
 
     b_shifter b_shifter (
         .data_i             (Bus_B),
-        .Rs_shift_ammount   (Rs_data),
+        .Rs_shift_ammount   (Rs_data[7:0]),
         .shift_data         (shift_data),
         .carry_i            (CPSR[29]),
         .Imm_Operand_f      (imm_operand_f),
@@ -210,7 +205,6 @@ module arm7tdmi_top (
 
         .writeback_en    (writeback_en),
 
-
         .ra           (Rn_addr),
         .rb           (Rm_addr),
         .rd_a         (Rn_data),
@@ -224,16 +218,19 @@ module arm7tdmi_top (
         .Reg_bank_en  (reg_bank_en),
 
         .pc_we        (pc_we),
+        .link_f       (link_f),
         .incrementer_wdata (Incrementer_bus),
         .pc_rdata     (PC_bus),
 
         .nzcv         (nzcv),
         .Set_condition_f (set_condition_f),
+        .PSR_wr_en    (psr_wr_en),
         .PSR_rd_en    (psr_rd_en),
         .PSR_sel_f    (psr_sel_f),
         .PSR_flags_only_f (psr_flags_only_f),
         .cpsr_rdata   (CPSR),
         .spsr_rdata   (),
+
 
         .r0     (r0),
         .r1     (r1),
@@ -267,11 +264,12 @@ module arm7tdmi_top (
     );
 
     incrementer incrementer (
-        .addr_reg_in  (incrementer_in),
+        .addr_reg_in  (A),
         .pc_in    (PC_bus),
         .increment_sel     (increment_sel),
         .tbit     (tbit),
         .clk      (clk),
+        .up_down_f(up_down_f),
         .addr_out (Incrementer_bus)
     );
 
@@ -298,10 +296,8 @@ module arm7tdmi_top (
         .ALE            (),
         .Addr_reg_sel   (addr_reg_sel),
         .Addr_reg_en    (addr_reg_en),
-        .Pre_Pos_Inc_f  (pre_pos_inc_f),
 
-        .A              (A),
-        .to_incrementer (incrementer_in)
+        .A              (A)
     );
 
     multiplier multiplier(
@@ -373,7 +369,6 @@ module arm7tdmi_top (
         .HW_Byte_f          (hw_byte_f),
         .Load_f             (load_f),
         .Pre_Pos_Indx_f     (pre_pos_indx_f),
-        .Pre_Pos_Inc_f      (pre_pos_inc_f),
         .Up_Down_f          (up_down_f),
         .Write_Back_f       (write_back_f),
         .L_PSR_UserMode_f   (l_psr_usermode_f),

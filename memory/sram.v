@@ -31,7 +31,7 @@
 `timescale 1ns / 1ps
 
 module sram #(
-    parameter DEPTH_POW2 = 10           // 2^10 = 1024 words = 4 KB
+    parameter DEPTH_POW2 = 12           // 2^10 = 1024 words = 4 KB
 )(
     input  wire                       clk,
 
@@ -123,8 +123,12 @@ module sram #(
     //  Quartus-recognized byte-enable template that maps to native M10K
     //  byte-enable hardware.
     // =========================================================================
-    (* ramstyle = "M10K" *)
+    (*ramstyle = "M10K", ram_init_file = "memory/instrucoes.mif"*)
     reg [31:0] mem [0:DEPTH-1];
+
+    //initial begin
+    //    $readmemh("memory/instrucoes.hex", mem);
+    //end
 
     reg [31:0] mem_q;     // registered read data straight out of the M10K
 
@@ -142,12 +146,12 @@ module sram #(
     // accepts read+write in different always blocks for simple dual-action
     // single-port RAM as long as both are clocked and there is no
     // combinational read elsewhere.
-	reg [31:0] wdata_bypass;
-	reg        bypass_valid;
+	reg [31:0] wdata_bypass = 32'b0;
+	reg        bypass_valid = 0;
 
 	always @(posedge clk) begin
 		mem_q        <= mem[word_addr];
-		wdata_bypass <= wdata_merged;            // what would have been written
+		wdata_bypass <= wdata_shifted;           // what would have been written
 		bypass_valid <= write_en;                // collision detector simplification
 	end
 
@@ -157,11 +161,11 @@ module sram #(
     //  Post-RAM pipeline stage: size selection + sign extension
     //  These signals are pipelined one cycle so they line up with mem_q.
     // =========================================================================
-    reg [1:0] size_q;
-    reg [1:0] byte_lane_q;
-    reg       sign_extend_q;
-    reg       misalign_q;
-    reg       we_q;
+    reg [1:0] size_q = 2'b0;
+    reg [1:0] byte_lane_q = 2'b0;
+    reg       sign_extend_q = 0;
+    reg       misalign_q = 0;
+    reg       we_q = 0;
 
     always @(posedge clk) begin
         size_q        <= size;
@@ -174,9 +178,9 @@ module sram #(
     // -------------------------------------------------------------------------
     //  Output formatting (combinational on the registered read data)
     // -------------------------------------------------------------------------
-    reg [ 7:0] byte_sel;
-    reg [15:0] half_sel;
-    reg [31:0] rdata_next;
+    reg [ 7:0] byte_sel = 0;
+    reg [15:0] half_sel = 0;
+    reg [31:0] rdata_next = 0;
 
     always @(*) begin
         // Byte select
@@ -203,8 +207,8 @@ module sram #(
     //  Output register (this one CAN have a reset — it's outside the RAM)
     // -------------------------------------------------------------------------
     always @(*) begin
-        rdata          <= rdata_next;
-        misalign_fault <= misalign_q & we_q;
+        rdata          = rdata_next;
+        misalign_fault = misalign_q & we_q;
     end
 
 endmodule

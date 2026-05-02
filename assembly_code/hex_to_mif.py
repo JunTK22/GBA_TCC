@@ -7,7 +7,7 @@ words = raw_text.split()
 
 with open("instrucoes.mif", "w") as f:
     f.write(f"DEPTH = {len(words)};\n")
-    f.write("WIDTH = 16;\n")
+    f.write("WIDTH = 32;\n")
     f.write("ADDRESS_RADIX = HEX;\n")
     f.write("DATA_RADIX = HEX;\n")
     f.write("CONTENT BEGIN\n")

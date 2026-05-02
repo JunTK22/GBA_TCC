@@ -10,17 +10,15 @@ module address_reg (
     input wire          ALE, // Address Latch Enable
     input wire [1:0]    Addr_reg_sel,
     input wire          Addr_reg_en,
-    input wire          Pre_Pos_Inc_f,
 
-    output wire [31:0]  A,
-    output wire [31:0]  to_incrementer
+    output wire [31:0]  A
 );
 
 // Address Register Input Selector Params
 parameter	Incrementer_bus = 2'b00;
 parameter	ALU_bus = 2'b01;
 parameter	PC_bus  = 2'b10;
-parameter	Rn_bus	= 2'b11; // Used to feed Addr register Rn directly if necessary during Load/Store instructions
+parameter	Rn_bus	= 2'b11;
 
 reg [31:0] address_i = 0;
 reg [31:0] address_reg = 0;
@@ -30,7 +28,7 @@ always @(*) begin
         Incrementer_bus: address_i <= Incrementer; 
         ALU_bus: address_i  <= ALU;
         PC_bus: address_i   <= PC;
-        Rn_bus: address_i   <= Rn; 
+        Rn_bus: address_i   <= Rn;
     endcase
 end
 
@@ -44,7 +42,6 @@ always @(posedge CLK or negedge nRST) begin
     end
 end
 
-assign A = Pre_Pos_Inc_f ? address_i : address_reg;
-assign to_incrementer = address_reg;
+assign A = address_reg;
 
 endmodule

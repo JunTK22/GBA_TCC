@@ -33,11 +33,19 @@ module incrementer (
     input  wire        increment_sel,      // TBIT (Thumb state indicator)
     input  wire        tbit,      // TBIT (Thumb state indicator)
     input  wire        clk,
-    output reg  [31:0] addr_out   // Incremented address (next sequential)
+    input  wire        up_down_f,
+    output reg  [31:0] addr_out = 0   // Incremented address (next sequential)
 );
 
-    always @(negedge clk) begin
-        addr_out = (increment_sel ? addr_reg_in : pc_in) + (tbit ? 32'd2 : 32'd4);        
+    //always @(negedge clk) begin
+    //    addr_out <= (increment_sel ? addr_reg_in : pc_in) + (tbit ? 32'd2 : 32'd4);        
+    //end
+
+    always @(*) begin
+        case (increment_sel)
+            0: addr_out = pc_in + (tbit ? 32'd2 : 32'd4);
+            1: addr_out = up_down_f ? (addr_reg_in + (tbit ? 32'd2 : 32'd4)) : (addr_reg_in - (tbit ? 32'd2 : 32'd4));
+        endcase
     end
 
 endmodule

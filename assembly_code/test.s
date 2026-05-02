@@ -11,9 +11,9 @@ _start:
         @ ==============================================================
         MOV     R0, #10             @ Carrega R0 com 10 (0x0A)
         MOV     R1, #3              @ Carrega R1 com 3 (0x03)
-        MOV     R12, #116      @ Aponta R12 para nossa área de dados na memória
+        LDR     R12, =DataArea      @ Aponta R12 para nossa área de dados na memória
         
-        MOV     R13, #200     @ Inicializa o Stack Pointer (R13)
+        LDR     R13, =StackArea     @ Inicializa o Stack Pointer (R13)
         ADD     R13, R13, #128      @ Ajusta o SP para o final do bloco (pilha cresce para baixo)
 
         @ ==============================================================
@@ -76,8 +76,8 @@ _start:
         LDRH    R9, [R12, #8]       @ Carrega Halfword (Zero-extended)
         LDRSH   R9, [R12, #8]       @ Carrega Halfword (Sign-extended)
 
-        SWP     R10, R0, [R12]      @ Troca a palavra de R0 com a memória apontada por R12
-        SWPB    R10, R0, [R12]      @ Troca o byte de R0 com a memória apontada por R12
+        SWP     R10, R3, [R12]      @ Troca a palavra de R0 com a memória apontada por R12
+        SWPB    R10, R2, [R12]      @ Troca o byte de R0 com a memória apontada por R12
 
         @ ==============================================================
         @ 6. MÚLTIPLOS REGISTRADORES E PILHA (STACK)
