@@ -1,4 +1,4 @@
-module decoder(
+module decoder_v2(
 	input	wire [31:0]	Data_i,
 	input	wire [31:0]	PSR,
 	input	wire 		CLK,
@@ -188,9 +188,13 @@ reg wait_f = 0;
 
 wire [1:0] special_flow;
 wire [4:0] reg_list_ones;
+wire [3:0] thumb_reg_list_ones; // popcount of bits[7:0] for Thumb Push/Pop and Multi_LS
 
 assign reg_list_ones	=	instruct_reg[0]+instruct_reg[1]+instruct_reg[2]+instruct_reg[3]+instruct_reg[4]+instruct_reg[5]+instruct_reg[6]+instruct_reg[7]+instruct_reg[8]+
 							instruct_reg[9]+instruct_reg[10]+instruct_reg[11]+instruct_reg[12]+instruct_reg[13]+instruct_reg[14]+instruct_reg[15];
+
+assign thumb_reg_list_ones = instruct_reg[0]+instruct_reg[1]+instruct_reg[2]+instruct_reg[3]+
+							 instruct_reg[4]+instruct_reg[5]+instruct_reg[6]+instruct_reg[7];
 
 // Listing registers for Block Load/Store instruction 
 reg [3:0]  i15 = 0;
@@ -218,7 +222,10 @@ assign SEQ		= (cycles_types[1:0] == 2'b00) ? 1'b1 : ((cycles_types[1:0] == 2'b11
 
 wire thumb_state;
 assign thumb_state = PSR[5];
-wire [3:0] cond = thumb_state ? 4'b1110 : instruct_reg[31:28]; // THUMB always unconditional
+// THUMB is unconditional except for Format 16 (Cond_Branch): bits[15:12]=1101 with bits[11:8]!=1111.
+// Bits[15:12]=1101 with bits[11:8]==1111 is SWI (Interrupt_T) which stays unconditional (AL).
+wire thumb_cond_branch = (instruct_reg[15:12] == 4'b1101) && (instruct_reg[11:8] != 4'b1111);
+wire [3:0] cond = thumb_state ? (thumb_cond_branch ? instruct_reg[11:8] : 4'b1110) : instruct_reg[31:28];
 
 always @* begin
     case (cond)
@@ -936,47 +943,130 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					Imm_o			<= {instruct_reg[6:0], 2'b00};
 				end
 				Push_Pop_Reg: begin
-					cycle_count		<=	(instruct_reg[20] ? (instruct_reg[15] ? 4'b1111 : 4'b0011) : 4'b0001) << reg_list_ones | ((8'b0 | 1'b1) << reg_list_ones)-1'b1;
-					cycles_types	<=	instruct_reg[20] ? (instruct_reg[15] ? {S,N,N,I} : {N,I}) : {N,N};
+					// Format 14: PUSH (L=0, bit11=0) -> STMFD SP!, {Rlist, [LR]} (pre-decrement)
+					//            POP  (L=1, bit11=1) -> LDMFD SP!, {Rlist, [PC]} (post-increment)
+					// Number of transfers = popcount(bits[7:0]) + (R bit ? 1 : 0).
+					// LR/PC is appended at the end of the chain via the i8 slot (see i0 chain below).
+					cycle_count		<=	(instruct_reg[11] ? (instruct_reg[8] ? 4'b1111 : 4'b0011) : 4'b0011)
+												<< (thumb_reg_list_ones + instruct_reg[8])
+											| (((20'b0 | 1'b1) << (thumb_reg_list_ones + instruct_reg[8])) - 1'b1);
+					cycles_types	<=	instruct_reg[11] ? (instruct_reg[8] ? {S,N,N,I} : {N,I}) : {N,N};
 
-					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
-					Up_Down_f		<= instruct_reg[23];
-					L_PSR_UserMode_f<= instruct_reg[22];
-
+					opcode_o		<= instruct_reg[11] ? ADD : SUB; // POP=ADD up, PUSH=SUB down
 					Load_f			<= instruct_reg[11];
-					PC_LR_f			<= instruct_reg[8];
+					Up_Down_f		<= instruct_reg[11];   // POP=up, PUSH=down
+					Pre_Pos_Indx_f	<= ~instruct_reg[11];  // PUSH=pre-decrement, POP=post-increment
 					Write_Back_f	<= 1;
+					PC_LR_f			<= instruct_reg[8];
 					wait_f			<= 1;
 
-					Addr_reg_sel <= Rn_bus;
+					Wr_Data_reg_en	<= ~instruct_reg[11]; // PUSH (L=0): latch register data for store
+					Addr_reg_sel	<= Rn_bus;
+					Bus_A_sel		<= Rn;
+					Bus_B_sel		<= Immediate;
+					Wr_Data_reg_sel	<= Reg_Bank;
 
-					Rn_o			<= 4'b1101; // R13
-					register_list	<= i0;
+					Rn_o			<= 4'b1101; // R13 (SP)
+					Rd_o			<= i0[3:0];
+					Rs_o			<= i0[3:0];
+					Imm_o			<= 24'd4;
+					register_list	<= instruct_reg[11] ? i0 : (i0 >> 4);
 				end
 				Multi_LS: begin
-					Load_f			<= instruct_reg[11];
+					// Format 15: LDMIA/STMIA Rb!, {Rlist}. bit11=L, bits[10:8]=Rb, bits[7:0]=Rlist.
+					// Always post-increment, write-back, user-mode (S=0). PC cannot be in Rlist.
+					cycle_count		<=	4'b0011 << thumb_reg_list_ones
+											| (((20'b0 | 1'b1) << thumb_reg_list_ones) - 1'b1);
+					cycles_types	<=	instruct_reg[11] ? {N,I} : {N,N};
 
-					Rn_o			<= instruct_reg[10:8];
-					Imm_o			<= instruct_reg[7:0];
+					opcode_o		<= ADD; // post-increment
+					Load_f			<= instruct_reg[11];
+					Up_Down_f		<= 1'b1;
+					Pre_Pos_Indx_f	<= 1'b0;
+					Write_Back_f	<= 1'b1;
+					wait_f			<= 1;
+
+					Wr_Data_reg_en	<= ~instruct_reg[11]; // STMIA (L=0): latch register data for store
+					Addr_reg_sel	<= Rn_bus; // first cycle: load addr from Rb
+					Bus_A_sel		<= Rn;
+					Bus_B_sel		<= Immediate;
+					Wr_Data_reg_sel	<= Reg_Bank;
+
+					Rn_o			<= {1'b0, instruct_reg[10:8]}; // Rb (R0..R7)
+					Rd_o			<= i0[3:0];
+					Rs_o			<= i0[3:0];
+					Imm_o			<= 24'd4;
+					register_list	<= instruct_reg[11] ? i0 : (i0 >> 4);
 				end
 				Cond_Branch: begin
+					// Format 16: B<cond> label, PC := PC + (SOffset8 << 1)
+					// cond_o was already loaded from instruct_reg[11:8] in the prologue;
+					// the cond wire above feeds cond_valid so the case body only runs when taken.
+					cycle_count		<= 3'b111;
+					cycles_types	<= {S,S,N};
+
+					opcode_o		<= ADD;
+					Reg_bank_en		<= 1;
+					B_shifter_en	<= 1;
+					Bus_B_sel		<= Immediate;
+					Addr_reg_sel	<= ALU_bus;
+
+					Rn_o			<= 4'b1111;
 					Rd_o			<= 4'b1111;
-					Imm_o			<= instruct_reg[7:0];
+					Imm_o			<= {{16{instruct_reg[7]}}, instruct_reg[7:0]}; // sign-extend 8b -> 24b
+					Shift_o			<= 8'b00001000; // LSL #1
 				end
 				Interrupt_T: begin
+					// Format 17: SWI Value8 (mirrors ARM Interrupt_A timing)
+					cycle_count 	<= 3'b111;
+					cycles_types	<= {S,S,N};
+
 					Interrupt_f		<= 1;
 				end
 				Uncon_Branch: begin
+					// Format 18: B label, PC := PC + (Offset11 << 1, sign-extended)
+					cycle_count		<= 3'b111;
+					cycles_types	<= {S,S,N};
+
+					opcode_o		<= ADD;
+					Reg_bank_en		<= 1;
+					B_shifter_en	<= 1;
+					Bus_B_sel		<= Immediate;
+					Addr_reg_sel	<= ALU_bus;
+
+					Rn_o			<= 4'b1111;
 					Rd_o			<= 4'b1111;
-					Imm_o			<= instruct_reg[10:0];
+					Imm_o			<= {{13{instruct_reg[10]}}, instruct_reg[10:0]}; // sign-extend 11b -> 24b
+					Shift_o			<= 8'b00001000; // LSL #1
 				end
 				L_Branch_Link: begin
+					// Format 19: BL label, two-instruction pair (16-bit each).
+					// H=0 (bit11=0): LR := PC + (signed_offset << 12). Single-cycle DP-style ADD.
+					// H=1 (bit11=1): tmp := next_PC; PC := LR + (offset << 1); LR := tmp | 1 (Thumb return).
 					Low_High_off_f	<= instruct_reg[11];
+					Link_f			<= instruct_reg[11]; // on H=1, reg_bank captures next_PC into LR
 
-					Rn_o			<= instruct_reg[11] ? 4'b1101 : 4'b1111;
-					Rd_o			<= instruct_reg[11] ? 4'b1111 : 4'b1101;
-					Imm_o			<= instruct_reg[10:0];
-					Shift_o			<= instruct_reg[11] ? 8'b00001000 : 8'b01100000;
+					Reg_bank_en		<= 1;
+					B_shifter_en	<= 1;
+					Bus_B_sel		<= Immediate;
+
+					opcode_o		<= ADD;
+					// Sign-extend 11-bit offset to 24-bit Imm_o (b_shifter then applies LSL).
+					Imm_o			<= {{13{instruct_reg[10]}}, instruct_reg[10:0]};
+					Shift_o			<= instruct_reg[11] ? 8'b00001000 : 8'b01100000; // H=1: LSL #1, H=0: LSL #12
+
+					if (instruct_reg[11]) begin
+						// H=1: PC = LR + (offset << 1). Flush pipeline like ARM Branch.
+						cycle_count		<= 3'b111;
+						cycles_types	<= {S,S,N};
+						Addr_reg_sel	<= ALU_bus;
+						Rn_o			<= 4'b1110; // LR
+						Rd_o			<= 4'b1111; // PC
+					end else begin
+						// H=0: LR = PC + (offset << 12). Plain DP write, no pipeline flush.
+						Rn_o			<= 4'b1111; // PC
+						Rd_o			<= 4'b1110; // LR
+					end
 				end
 				default: begin
 				end
@@ -1273,6 +1363,90 @@ always @(posedge CLK or negedge pipeline_rst_n) begin
 					end
 				end
 			end
+			Cond_Branch: begin
+				// Pipeline cleanup after the ALU drove the new PC into Addr_reg.
+				Reg_bank_en		<= 0;
+				B_shifter_en	<= 0;
+				Addr_reg_sel	<= Incrementer_bus;
+			end
+			Uncon_Branch: begin
+				Reg_bank_en		<= 0;
+				B_shifter_en	<= 0;
+				Addr_reg_sel	<= Incrementer_bus;
+			end
+			L_Branch_Link: begin
+				// H=1 half (Low_High_off_f=1) does the actual PC change; clean up like Branch.
+				if (Low_High_off_f) begin
+					Link_f			<= 0;
+					Reg_bank_en		<= 0;
+					B_shifter_en	<= 0;
+					Addr_reg_sel	<= Incrementer_bus;
+				end
+			end
+			Push_Pop_Reg: begin
+				// Mirrors BD_LS special_flow but base register is always SP and direction is fixed.
+				Writeback_en <= Write_Back_f ? 1'b1 : 1'b0;
+				Addr_reg_sel <= Incrementer_bus;
+				increment_sel <= Address_reg;
+				wait_f <= 0;
+
+				if (Load_f && ~wait_f) begin
+					opcode_o <= MOV;
+					Reg_bank_en <= 1;
+					B_shifter_en <= 0;
+					Bus_B_sel <= Data_reg_in;
+					Rd_o <= register_list[3:0];
+					register_list <= register_list >> 4;
+				end else if (~Load_f) begin
+					Rs_o <= register_list[3:0];
+					register_list <= register_list >> 4;
+					core_nRW <= 1;
+				end
+
+				if (cycle_count[3:2] == 2'b01) begin
+					Addr_reg_sel <= PC_bus;
+					Wr_Data_reg_en <= 0;
+					if (Pre_Pos_Indx_f) begin
+						Writeback_en <= 0;
+					end
+				end else if (cycle_count[2:1] == 2'b01) begin
+					core_nRW <= 0;
+					Writeback_en <= 0;
+					Wr_Data_reg_en <= 0;
+					Addr_reg_sel <= Incrementer_bus;
+					increment_sel <= PC;
+				end
+			end
+			Multi_LS: begin
+				Writeback_en <= Write_Back_f ? 1'b1 : 1'b0;
+				Addr_reg_sel <= Incrementer_bus;
+				increment_sel <= Address_reg;
+				wait_f <= 0;
+
+				if (Load_f && ~wait_f) begin
+					opcode_o <= MOV;
+					Reg_bank_en <= 1;
+					B_shifter_en <= 0;
+					Bus_B_sel <= Data_reg_in;
+					Rd_o <= register_list[3:0];
+					register_list <= register_list >> 4;
+				end else if (~Load_f) begin
+					Rs_o <= register_list[3:0];
+					register_list <= register_list >> 4;
+					core_nRW <= 1;
+				end
+
+				if (cycle_count[3:2] == 2'b01) begin
+					Addr_reg_sel <= PC_bus;
+					Wr_Data_reg_en <= 0;
+				end else if (cycle_count[2:1] == 2'b01) begin
+					core_nRW <= 0;
+					Writeback_en <= 0;
+					Wr_Data_reg_en <= 0;
+					Addr_reg_sel <= Incrementer_bus;
+					increment_sel <= PC;
+				end
+			end
 			default: begin
 
 			end
@@ -1285,7 +1459,9 @@ always @(*) begin
 		SD_Swap: Addr_reg_en <= cycle_count[3] || cycle_count[1] || cycle_count[0];
 		HW_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
 		SD_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
-		BD_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;			
+		BD_LS: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
+		Push_Pop_Reg: Addr_reg_en <= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
+		Multi_LS: Addr_reg_en <= 1'b1;
 		Pc_r_L: Addr_reg_en <= 1'b1;
 		LS_Reg_Off: Addr_reg_en <= 1'b1;
 		LS_SignEx_HW: Addr_reg_en <= 1'b1;
@@ -1294,7 +1470,7 @@ always @(*) begin
 		default: Addr_reg_en <= (cycles_types[1:0] == S || cycles_types[1:0] == N) ? 1'b1 : 1'b0;
 	endcase
 
-	if (Inst_decoded_o == BD_LS) begin
+	if (Inst_decoded_o == BD_LS || Inst_decoded_o == Push_Pop_Reg || Inst_decoded_o == Multi_LS) begin
 		pipeline_halt_r <= (!cycle_count[1]) ? 1'b0 : 1'b1;
 	end else begin
 		pipeline_halt_r <= (!cycle_count[1] || cycles_types[1:0] == S) ? 1'b0 : 1'b1;
@@ -1322,6 +1498,9 @@ always @(*) begin
 		i1  = instruct_reg[1]  ? {i2,  4'd1}  : i2;
 		i0  = instruct_reg[0]  ? {i1,  4'd0}  : i1;
 	end else begin
+		// THUMB register list: bits[7:0] = R0..R7. For Push/Pop (Format 14, bits[15:12]=1011),
+		// bit 8 (R) optionally adds LR (PUSH, L=0 -> r14) or PC (POP, L=1 -> r15) at the END.
+		// For Multi_LS (Format 15, bits[15:12]=1100), bit 8 belongs to Rb and must NOT be added.
 		i15 = 0;
 		i14 = 0;
 		i13 = 0;
@@ -1329,7 +1508,7 @@ always @(*) begin
 		i11 = 0;
 		i10 = 0;
 		i9  = 0;
-		i8  = instruct_reg[7] ?  {28'd0, 4'd1} : 32'd0;
+		i8  = (instruct_reg[15:12] == 4'b1011 && instruct_reg[8]) ? (instruct_reg[11] ? {28'd0, 4'd15} : {28'd0, 4'd14}) : 32'd0;
 		i7  = instruct_reg[7]  ? {i8, 4'd7}  : i8;
 		i6  = instruct_reg[6]  ? {i7, 4'd6}  : i7;
 		i5  = instruct_reg[5]  ? {i6, 4'd5}  : i6;

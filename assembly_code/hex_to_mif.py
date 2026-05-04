@@ -1,20 +1,27 @@
-# Save this as convert.py and run it in the same folder as your hex file
-with open("instrucoes.hex", "r") as f:
-    raw_text = f.read()
+# Convert ARM 32-bit hex words into a Quartus MIF padded to the SRAM depth.
+# sram.v has DEPTH_POW2 = 12 -> 4096 words at WIDTH = 32.
+TARGET_DEPTH = 4096
+WIDTH = 32
 
-# Split the text into individual 16-bit words (ignoring spaces/newlines)
-words = raw_text.split()
+with open("instrucoes.hex", "r") as f:
+    words = f.read().split()
+
+if len(words) > TARGET_DEPTH:
+    raise SystemExit(
+        f"hex has {len(words)} words but SRAM holds only {TARGET_DEPTH}"
+    )
+
+# Pad with explicit zeros so Quartus sees every address initialised.
+words += ["00000000"] * (TARGET_DEPTH - len(words))
 
 with open("instrucoes.mif", "w") as f:
-    f.write(f"DEPTH = {len(words)};\n")
-    f.write("WIDTH = 32;\n")
+    f.write(f"DEPTH = {TARGET_DEPTH};\n")
+    f.write(f"WIDTH = {WIDTH};\n")
     f.write("ADDRESS_RADIX = HEX;\n")
     f.write("DATA_RADIX = HEX;\n")
     f.write("CONTENT BEGIN\n")
-    
     for i, word in enumerate(words):
         f.write(f"{i:X} : {word};\n")
-        
     f.write("END;\n")
 
-print("Conversion complete! Use instrucoes.mif in your project.")
+print(f"Conversion complete! {TARGET_DEPTH} entries written to instrucoes.mif.")

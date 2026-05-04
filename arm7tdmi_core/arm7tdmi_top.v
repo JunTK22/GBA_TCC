@@ -268,7 +268,7 @@ module arm7tdmi_top (
         .pc_in    (PC_bus),
         .increment_sel     (increment_sel),
         .tbit     (tbit),
-        .clk      (clk),
+        //.clk      (clk),
         .up_down_f(up_down_f),
         .addr_out (Incrementer_bus)
     );
@@ -309,7 +309,7 @@ module arm7tdmi_top (
         .result_hi          (Multi_result_hi)
     );
 
-    decoder decoder (
+    decoder decoder_v2 (
         .Data_i             (DIN),
         .PSR                (CPSR),
         .CLK                (clk),
