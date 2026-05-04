@@ -4,13 +4,6 @@
 @
 @ GAS (GNU Assembler) version - compatible with arm-none-eabi-gcc
 @
-@ BUILD:
-@   arm-none-eabi-gcc -march=armv4t -marm -nostdlib -nostartfiles \
-@                     -Wl,-Ttext=0x00000000 \
-@                     -o arm7tdmi_test.elf arm7tdmi_test_gcc.s
-@
-@   arm-none-eabi-objcopy -O binary arm7tdmi_test.elf arm7tdmi_test.bin
-@
 @ SYNTAX CHANGES FROM armasm TO GAS:
 @   ; comment             ->  @ comment
 @   AREA ..., DATA        ->  .data / .bss

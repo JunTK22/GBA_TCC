@@ -30,7 +30,7 @@
 
 `timescale 1ns / 1ps
 
-module sram #(
+module sram_sim #(
     parameter DEPTH_POW2 = 12           // 2^10 = 1024 words = 4 KB
 )(
     input  wire                       clk,
@@ -123,21 +123,39 @@ module sram #(
     //  Quartus-recognized byte-enable template that maps to native M10K
     //  byte-enable hardware.
     // =========================================================================
+    (*ramstyle = "M10K"*)
+    reg [31:0] mem [0:DEPTH-1];
 
-	wire [31:0] read_data;
+    initial begin
+        $readmemh("instrucoes.hex", mem);
+    end
 
-    M10K #(
-        .WIDTH (32),
-        .DEPTH_POW2 (DEPTH_POW2),
-        .INIT_FILE ("assembly_code/instrucoes.mif")
-    ) sram_inst(
-        .addr    (word_addr),
-        .byteena (byteena),
-        .clk     (clk),
-        .data    (wdata_shifted),
-        .wren    (write_en),
-        .q       (read_data)
-    );
+    reg [31:0] mem_q = 0;     // registered read data straight out of the M10K
+
+    genvar gi;
+    generate
+        for (gi = 0; gi < 4; gi = gi + 1) begin : byte_lanes
+            always @(posedge clk) begin
+                if (write_en && byteena[gi])
+                    mem[word_addr][gi*8 +: 8] <= wdata_shifted[gi*8 +: 8];
+            end
+        end
+    endgenerate
+ 
+    // Read port with bypass — separate clocked block, but only reads `mem`. Quartus
+    // accepts read+write in different always blocks for simple dual-action
+    // single-port RAM as long as both are clocked and there is no
+    // combinational read elsewhere.
+	reg [31:0] wdata_bypass = 32'b0;
+	reg        bypass_valid = 0;
+
+	always @(posedge clk) begin
+		mem_q        <= mem[word_addr];
+		wdata_bypass <= wdata_shifted;           // what would have been written
+		bypass_valid <= write_en;                // collision detector simplification
+	end
+
+	wire [31:0] read_data = bypass_valid ? wdata_bypass : mem_q;
 
     // =========================================================================
     //  Post-RAM pipeline stage: size selection + sign extension
