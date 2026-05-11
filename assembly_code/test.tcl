@@ -1,4 +1,5 @@
-vsim -i -l msim_transcript work.arm7tdmi_project_sim -t ns -voptargs=+acc
+vsim -i -l msim_transcript work.arm7tdmi_project_sim -t ns -voptargs=+acc -debugdb
+log -r /*
 add wave -position insertpoint  \
 sim:/arm7tdmi_project_sim/CLOCK_50
 add wave -position insertpoint  \
@@ -34,3 +35,5 @@ sim:/arm7tdmi_project_sim/MAS
 force SW[1]  1 0 ns
 force SW[1]  0 3 ns
 force CLOCK_50 0 0 ns, 1 5 ns -r 10 ns
+
+run 20000 ns

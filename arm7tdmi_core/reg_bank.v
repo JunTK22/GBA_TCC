@@ -36,6 +36,9 @@ module reg_bank (
     input  wire [4:0]  cpsr_mode,
 
     input  wire        writeback_en,
+    input  wire        exception_entry,
+    input  wire        exc_I_set,
+    input  wire        exc_F_set,
 
     // === GPR Read Ports (r0–r15) ============================================
     input  wire [3:0]  ra,            // register A address (Rn)
@@ -175,7 +178,7 @@ module reg_bank (
                 pc_reg <= incrementer_wdata;
 
             if (link_f)
-                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg;
+                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4);
 
             // Dedicated writeback write
             if (writeback_en) begin
@@ -197,7 +200,10 @@ module reg_bank (
             if (PSR_wr_en) begin
                 if (PSR_sel_f) begin
                     if (spsr_idx(cpsr_mode) != -1) begin
-                        if (PSR_flags_only_f) begin                            
+                        if (exception_entry) begin // Exception Entry Handler
+                            spsr_reg[spsr_idx(cpsr_mode)][31:28] <= cpsr_reg;
+                            cpsr_reg[5:0] <= {1'b0, cpsr_mode};
+                        end if (PSR_flags_only_f) begin                            
                             spsr_reg[spsr_idx(cpsr_mode)][31:28] <= write_data[31:28];
                         end else begin
                             spsr_reg[spsr_idx(cpsr_mode)] <= write_data;

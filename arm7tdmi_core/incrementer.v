@@ -30,19 +30,12 @@
 module incrementer (
     input  wire [31:0] addr_reg_in,   // Current PC or address register value
     input  wire [31:0] pc_in,   // Current PC or address register value
-    input  wire        increment_sel,      // TBIT (Thumb state indicator)
+    input  wire        increment_sel,
     input  wire        tbit,      // TBIT (Thumb state indicator)
     //input  wire        clk,
     input  wire        up_down_f,
     output reg  [31:0] addr_out = 0   // Incremented address (next sequential)
 );
-
-    //always @(negedge clk) begin
-    //    case (increment_sel)
-    //        0: addr_out <= pc_in + (tbit ? 32'd2 : 32'd4);
-    //        1: addr_out <= up_down_f ? (addr_reg_in + (tbit ? 32'd2 : 32'd4)) : (addr_reg_in - (tbit ? 32'd2 : 32'd4));
-    //    endcase
-    //end
 
     always @(*) begin
         case (increment_sel)
@@ -50,5 +43,7 @@ module incrementer (
             1: addr_out = up_down_f ? (addr_reg_in + (tbit ? 32'd2 : 32'd4)) : (addr_reg_in - (tbit ? 32'd2 : 32'd4));
         endcase
     end
+
+    //assign addr_out = (increment_sel ? addr_reg_in : pc_in) + (tbit ? 32'd2 : 32'd4);
 
 endmodule
