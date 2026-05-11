@@ -31,7 +31,8 @@
 `timescale 1ns / 1ps
 
 module sram #(
-    parameter DEPTH_POW2 = 12           // 2^10 = 1024 words = 4 KB
+    parameter DEPTH_POW2 = 12,                              // 2^DEPTH_POW2 32-bit words
+    parameter INIT_FILE  = "assembly_code/instrucoes.mif"
 )(
     input  wire                       clk,
 
@@ -129,7 +130,7 @@ module sram #(
     M10K #(
         .WIDTH (32),
         .DEPTH_POW2 (DEPTH_POW2),
-        .INIT_FILE ("assembly_code/instrucoes.mif")
+        .INIT_FILE (INIT_FILE)
     ) sram_inst(
         .addr    (word_addr),
         .byteena (byteena),

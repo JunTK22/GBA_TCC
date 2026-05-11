@@ -105,13 +105,13 @@ module alu (
                 is_arithmetic = 1'b1;
                 effective_a   = op_a;
                 effective_b   = ~op_b + 32'b1;
-                adder_cin     = cpsr_c;
+                adder_cin     = cpsr_c - 1'b1;
             end
             4'b0111: begin // RSC   op_b - op_a - ~C
                 is_arithmetic = 1'b1;
                 effective_a   = ~op_a + 32'b1;
                 effective_b   = op_b;
-                adder_cin     = cpsr_c;
+                adder_cin     = cpsr_c - 1'b1;
             end
             4'b1010: begin // CMP (SUB, flags only)
                 is_arithmetic = 1'b1;
