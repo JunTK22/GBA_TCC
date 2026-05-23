@@ -35,10 +35,14 @@ module reg_bank (
     input  wire        reset_n,       // optional (PC=0 on reset, per 3.11)
     input  wire [4:0]  cpsr_mode,
 
+    input  wire [31:0] writeback_addr,
     input  wire        writeback_en,
     input  wire        exception_entry,
     input  wire        exc_I_set,
     input  wire        exc_F_set,
+
+    input  wire        link_f,
+    input  wire        low_high_off_f,
 
     // === GPR Read Ports (r0–r15) ============================================
     input  wire [3:0]  ra,            // register A address (Rn)
@@ -57,20 +61,20 @@ module reg_bank (
     // === PC (r15) special interface =========================================
     // (pipeline adds +8 / +4 when reading r15 — see 3.7 and 10.x timing)
     input  wire        pc_we,
-    input  wire        link_f,
     input  wire [31:0] incrementer_wdata,
     output wire [31:0] pc_rdata,      // current PC value
 
     // === Status Registers (CPSR + SPSR) =====================================
     input  wire [3:0]  nzcv,
-    input  wire        Set_condition_f,
+    input  wire        set_condition_f,
     input  wire        PSR_wr_en,
     input  wire        PSR_rd_en,
     input  wire        PSR_sel_f,
-    input  wire        PSR_flags_only_f,
     output wire [31:0] cpsr_rdata,
 
     output wire [31:0] spsr_rdata,     // SPSR of current mode (control prevents user mode)
+
+    input  wire        set_thumb,
 
     // Debug outputs     
     output wire [31:0] r0,
@@ -169,30 +173,42 @@ module reg_bank (
                 end else if (rd_addr < 15) begin
                     r_sp_lr[bank_idx(cpsr_mode)][rd_addr-13] <= write_data;
                 end else if (rd_addr == 15) begin
-                    pc_reg <= write_data;
+                    pc_reg <= cpsr_reg[5] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
                 end
             end
 
             // Dedicated PC write (branches, data ops to r15, etc.)
             if (pc_we)
-                pc_reg <= incrementer_wdata;
+                pc_reg <= cpsr_reg[5] ? {incrementer_wdata[31:1], 1'b0} : {incrementer_wdata[31:2], 2'b00};
 
             if (link_f)
-                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4);
+                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4) + low_high_off_f;
+
+            // Dedicated Thumb Set
+            if (set_thumb) begin
+                if (rb < 8)
+                    cpsr_reg[5] <= r_low[rb][0];
+                else if (rb < 13)
+                    cpsr_reg[5] <= (cpsr_mode == 5'b10001) ? r_mid_fiq[rb-8][0] : r_mid[rb-8][0];
+                else if (rb < 15)
+                    cpsr_reg[5] <= r_sp_lr[bank_idx(cpsr_mode)][rb-13][0];
+                else
+                    cpsr_reg[5] <= pc_reg[0];
+            end
 
             // Dedicated writeback write
             if (writeback_en) begin
                 if (ra < 8) begin
-                    r_low[ra] <= incrementer_wdata;
+                    r_low[ra] <= writeback_addr;
                 end else if (ra < 13) begin
                     if (cpsr_mode == 5'b10001) // FIQ
-                        r_mid_fiq[ra-8] <= incrementer_wdata;
+                        r_mid_fiq[ra-8] <= writeback_addr;
                     else
-                        r_mid[ra-8] <= incrementer_wdata;
+                        r_mid[ra-8] <= writeback_addr;
                 end else if (ra < 15) begin
-                    r_sp_lr[bank_idx(cpsr_mode)][ra-13] <= incrementer_wdata;
+                    r_sp_lr[bank_idx(cpsr_mode)][ra-13] <= writeback_addr;
                 end else if (ra == 15) begin
-                    pc_reg <= incrementer_wdata;
+                    pc_reg <= cpsr_reg[5] ? {writeback_addr[31:1], 1'b0} : {writeback_addr[31:2], 2'b00};
                 end
             end
 
@@ -201,21 +217,27 @@ module reg_bank (
                 if (PSR_sel_f) begin
                     if (spsr_idx(cpsr_mode) != -1) begin
                         if (exception_entry) begin // Exception Entry Handler
-                            spsr_reg[spsr_idx(cpsr_mode)][31:28] <= cpsr_reg;
+                            spsr_reg[spsr_idx(cpsr_mode)] <= cpsr_reg;
                             cpsr_reg[5:0] <= {1'b0, cpsr_mode};
-                        end if (PSR_flags_only_f) begin                            
+                            if (exc_F_set) cpsr_reg[6] <= 1;
+                            if (exc_I_set) cpsr_reg[7] <= 1;
+                        end else if (set_condition_f) begin                            
                             spsr_reg[spsr_idx(cpsr_mode)][31:28] <= write_data[31:28];
                         end else begin
                             spsr_reg[spsr_idx(cpsr_mode)] <= write_data;
                         end
                     end
                 end else begin
-                    cpsr_reg <= write_data;                    
+                    if (set_condition_f) begin
+                        if (rd_addr == 4'b1111 && spsr_idx(cpsr_mode) != -1) begin
+                            cpsr_reg <= spsr_reg[spsr_idx(cpsr_mode)];
+                        end else begin
+                            cpsr_reg[31:28] <= nzcv;
+                        end
+                    end else begin
+                        cpsr_reg <= write_data;
+                    end
                 end
-            end
-
-            if (Set_condition_f) begin
-                cpsr_reg[31:28] <= nzcv;
             end
         end
     end

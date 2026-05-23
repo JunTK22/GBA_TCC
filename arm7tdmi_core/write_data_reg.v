@@ -24,17 +24,15 @@
 module write_data_reg (
     input  wire        clk,
     input  wire        reset_n,
-
     input  wire [31:0] data_in,
 
     input  wire        we,
-
     input  wire        nRW,
+    input  wire        MAS,
+    input  wire        signEx_f,
 
     output reg  [31:0] data_out,
-
     output wire        nENOUT,
-
     output wire        data_bus_oe
 );
 
@@ -42,7 +40,12 @@ module write_data_reg (
         if (!reset_n) begin
             data_out <= 32'h0000_0000;
         end else if (we) begin
-            data_out <= data_in;
+            case (MAS)
+                2'b00: data_out <= {{8{signEx_f ? data_in[7] : 1'b0}}, data_in};
+                2'b01: data_out <= {{16{signEx_f ? data_in[15] : 1'b0}}, data_in};
+                2'b10: data_out <= data_in;
+                default: data_out <= data_in;
+            endcase
         end
     end
 
