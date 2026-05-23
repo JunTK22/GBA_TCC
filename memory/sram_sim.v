@@ -31,7 +31,8 @@
 `timescale 1ns / 1ps
 
 module sram_sim #(
-    parameter DEPTH_POW2 = 12           // 2^10 = 1024 words = 4 KB
+    parameter DEPTH_POW2 = 12,           // 2^10 = 1024 words = 4 KB
+    parameter INIT_FILE  = "instrucoes.hex"
 )(
     input  wire                       clk,
 
@@ -127,7 +128,7 @@ module sram_sim #(
     reg [31:0] mem [0:DEPTH-1];
 
     initial begin
-        $readmemh("instrucoes.hex", mem);
+        $readmemh(INIT_FILE, mem);
     end
 
     reg [31:0] mem_q = 0;     // registered read data straight out of the M10K

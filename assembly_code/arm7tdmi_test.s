@@ -637,6 +637,7 @@ sub_stack_frame:
 
 after_subs:
     NOP
+    B     sec_BX                 @ skip literal pool below
     .ltorg                       @ *** LITERAL POOL 1 (after subroutine island)
 
 @ ==============================================================================
@@ -1002,6 +1003,7 @@ sec_STRB:
     STRB  R1, [R0], R3, LSR #1
     LDR   R0, =result_area
     STRB  R1, [R0], R3, ASR #1
+    B     sec_LDM                @ skip literal pool below
     .ltorg                       @ *** LITERAL POOL 3 (after §18)
 
 @ ==============================================================================
@@ -1137,6 +1139,7 @@ sub_push_pop_ret:
 
 after_push_pop:
     NOP
+    B     sec_MRS_MSR            @ skip literal pool below
     .ltorg                       @ *** LITERAL POOL 4 (after §21)
 
 @ ==============================================================================
@@ -1289,6 +1292,7 @@ sec_PSEUDO:
     NOP
     NOP
     NOP
+    B     sec_SHIFTER_MATRIX     @ skip literal pool below
     .ltorg                       @ *** LITERAL POOL 5 (after §25)
 
 @ ==============================================================================

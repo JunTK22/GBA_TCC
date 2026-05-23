@@ -64,6 +64,7 @@ module arm7tdmi_top (
     wire [31:0] Alu_bus;
     wire [31:0] PC_bus;
     wire [31:0] Incrementer_bus;
+    reg [31:0] writeback_addr;
     reg [31:0] wr_data;
 
     wire [31:0] CPSR;
@@ -77,12 +78,14 @@ module arm7tdmi_top (
     always @(*) begin
         if (exception_entry) begin
             case (exception_type)
+                3'd0: cpsr_mode = 5'b10011; // Supervisor (Reset)
                 3'd1: cpsr_mode = 5'b11011; // Undefined
+                3'd2: cpsr_mode = 5'b10011; // Supervisor (SWI)
                 3'd3: cpsr_mode = 5'b10111; // Prefetch Abort
                 3'd4: cpsr_mode = 5'b10111; // Data Abort
                 3'd6: cpsr_mode = 5'b10010; // IRQ
                 3'd7: cpsr_mode = 5'b10001; // FIQ
-                default: cpsr_mode = 5'b10000;
+                default: cpsr_mode = 5'b10000; // User
             endcase
         end else begin
             cpsr_mode = CPSR[4:0];
@@ -91,6 +94,7 @@ module arm7tdmi_top (
 
     wire        tbit;
     assign      tbit = CPSR[5];
+    assign      tbit_out = tbit;
 
 ////////// Encoder //////////////
     wire [5:0] Inst_decoded;
@@ -98,7 +102,7 @@ module arm7tdmi_top (
     wire [3:0] opcode;
     wire [7:0] shift_data;
 
-    wire       Set_PSR_Thumb_bit;
+    wire       set_thumb_bit;
     wire       cond_valid;
 
     wire       core_nRW;
@@ -138,7 +142,6 @@ module arm7tdmi_top (
     wire        increment_sel;
 
     // control flags
-    wire        set_condition_f;
     wire        imm_operand_f;
     wire        acumulate_f;
     wire        mult_long_f;
@@ -153,7 +156,7 @@ module arm7tdmi_top (
     wire        transf_len_f;
     wire        interrupt_f;
     wire        psr_sel_f;
-    wire        psr_flags_only_f;
+    wire        set_condition_f;
     wire        h1_f;
     wire        h2_f;
     wire        sp_f;
@@ -190,27 +193,34 @@ module arm7tdmi_top (
 
     always @(*) begin
         case (Bus_A_sel)
-            Rn: Bus_A <= Rn_data;
-            Rs: Bus_A <= Rs_data;
-            default: Bus_A <= Rn_data;
+            Rn: Bus_A = Rn_data;
+            Rs: Bus_A = Rs_data;
+            default: Bus_A = Rn_data;
         endcase
     end
 
     always @(*) begin
         case (Bus_B_sel)
-            Rm: Bus_B <= Rm_data;
-            Immediate: Bus_B <= {{8{signEx_f}}, Immediate_data};
-            Multiplier_Lo: Bus_B <= Multi_result_lo;
-            Multiplier_Hi: Bus_B <= Multi_result_hi;
-            Data_reg_in: Bus_B <= Mem_Data_reg_in;
-            default: Bus_B <= 32'd0;
+            Rm: Bus_B = Rm_data;
+            Immediate: Bus_B = {{8{signEx_f ? Immediate_data[23] : 1'b0}}, Immediate_data};
+            Multiplier_Lo: Bus_B = Multi_result_lo;
+            Multiplier_Hi: Bus_B = Multi_result_hi;
+            Data_reg_in: Bus_B = Mem_Data_reg_in;
+            default: Bus_B = 32'd0;
         endcase
     end
 
     always @(*) begin
         case (wr_data_reg_sel)
-            1'b0: wr_data <= Rs_data;
-            1'b1: wr_data <= Bus_B;
+            1'b0: wr_data = Rs_data;
+            1'b1: wr_data = Bus_B;
+        endcase
+    end
+
+    always @(*) begin
+        case (pre_pos_indx_f)
+            1'b0: writeback_addr = Incrementer_bus;
+            1'b1: writeback_addr = A;
         endcase
     end
 
@@ -230,10 +240,14 @@ module arm7tdmi_top (
         .reset_n      (reset_n),
         .cpsr_mode    (cpsr_mode),
 
+        .writeback_addr (writeback_addr),
         .writeback_en (writeback_en),
         .exception_entry (exception_entry),
         .exc_I_set (exc_I_set),
         .exc_F_set (exc_F_set),
+
+        .link_f       (link_f),
+        .low_high_off_f (low_high_off_f),
 
         .ra           (Rn_addr),
         .rb           (Rm_addr),
@@ -248,19 +262,18 @@ module arm7tdmi_top (
         .Reg_bank_en  (reg_bank_en),
 
         .pc_we        (pc_we),
-        .link_f       (link_f),
         .incrementer_wdata (Incrementer_bus),
         .pc_rdata     (PC_bus),
 
         .nzcv         (nzcv),
-        .Set_condition_f (set_condition_f),
+        .set_condition_f (set_condition_f),
         .PSR_wr_en    (psr_wr_en),
         .PSR_rd_en    (psr_rd_en),
         .PSR_sel_f    (psr_sel_f),
-        .PSR_flags_only_f (psr_flags_only_f),
         .cpsr_rdata   (CPSR),
-        .spsr_rdata   (),
+        .spsr_rdata   (SPSR),
 
+        .set_thumb    (set_thumb_bit),
 
         .r0     (r0),
         .r1     (r1),
@@ -294,13 +307,13 @@ module arm7tdmi_top (
     );
 
     incrementer incrementer (
-        .addr_reg_in  (A),
-        .pc_in    (PC_bus),
-        .increment_sel     (increment_sel),
-        .tbit     (tbit),
-        //.clk      (clk),
-        .up_down_f(up_down_f),
-        .addr_out (Incrementer_bus)
+        .addr_reg_in    (A),
+        .pc_in          (PC_bus),
+        .increment_sel  (increment_sel),
+        .tbit           (tbit),
+        .writeback_en   (writeback_en),
+        .up_down_f      (up_down_f),
+        .addr_out       (Incrementer_bus)
     );
 
     write_data_reg write_data_reg (
@@ -309,6 +322,8 @@ module arm7tdmi_top (
         .data_in  (wr_data),
         .we       (wr_data_reg_en),
         .nRW      (core_nRW),
+        .MAS      (MAS),
+        .signEx_f (signEx_f),
         .data_out (DOUT),
         .nENOUT   (nENOUT),
         .data_bus_oe ()
@@ -342,9 +357,9 @@ module arm7tdmi_top (
 
     decoder decoder (
         .Data_i             (DIN),
-        .PSR                (CPSR),
+        .CPSR               (CPSR),
+        .SPSR               (SPSR),
         .CLK                (clk),
-        .Rn0_Thumb          (Rm_data[0]),   // bit[0] of Rn for BX/Thumb
         .pipeline_rst_n     (reset_n),
         .addr_odd           (A[1]),
 
@@ -355,6 +370,9 @@ module arm7tdmi_top (
         .exception_type     (exception_type),
         .exception_req      (exception_req),
         .exception_entry    (exception_entry),
+
+        .nzcv               (nzcv),
+        .reg_cond_field     (Alu_bus[31:28]),
 
         .Data_o             (Mem_Data_reg_in),
 
@@ -367,7 +385,7 @@ module arm7tdmi_top (
         .Rm_o               (Rm_addr),
         .Imm_o              (Immediate_data),
         .Shift_o            (shift_data),
-        .PSR_Thumb_bit      (Set_PSR_Thumb_bit),
+        .set_thumb_bit      (set_thumb_bit),
 
         .cond_valid         (cond_valid),
 
@@ -396,7 +414,6 @@ module arm7tdmi_top (
         .increment_sel      (increment_sel),
         .alu_cin_sel        (alu_cin_sel),
 
-        .Set_condition_f    (set_condition_f),
         .Imm_Operand_f      (imm_operand_f),
         .Acumulate_f        (acumulate_f),
         .Mult_Long_f        (mult_long_f),
@@ -412,7 +429,7 @@ module arm7tdmi_top (
         .Transf_len_f       (transf_len_f),
         .Interrupt_f        (interrupt_f),
         .PSR_sel_f          (psr_sel_f),
-        .PSR_flags_only_f   (psr_flags_only_f),
+        .set_condition_f    (set_condition_f),
         .H1_f               (h1_f),
         .H2_f               (h2_f),
         .SP_f               (sp_f),
