@@ -33,7 +33,7 @@ sim:/arm7tdmi_project_sim/arm7tdmi_top/decoder/instruct_dec \
 sim:/arm7tdmi_project_sim/MAS
 
 force SW[1]  1 0 ns
-force SW[1]  0 3 ns
+force SW[1]  0 30 ns
 force CLOCK_50 0 0 ns, 1 5 ns -r 10 ns
 
 run 20000 ns

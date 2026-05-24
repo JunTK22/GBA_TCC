@@ -32,12 +32,14 @@
 
 module reg_bank (
     input  wire        clk,
-    input  wire        reset_n,       // optional (PC=0 on reset, per 3.11)
+//    input  wire        nrst,       // optional (PC=0 on reset, per 3.11)
     input  wire [4:0]  cpsr_mode,
 
     input  wire [31:0] writeback_addr,
     input  wire        writeback_en,
+    input  wire        exception_rst,       // optional (PC=0 on reset, per 3.11)
     input  wire        exception_entry,
+    input  wire [2:0]  exception_type,
     input  wire        exc_I_set,
     input  wire        exc_F_set,
 
@@ -145,20 +147,36 @@ module reg_bank (
     // Synchronous writes (reset + normal operation)
     // =========================================================================
     integer i;
-    always @(posedge clk or negedge reset_n) begin
-        if (!reset_n) begin
-            // Reset behaviour (Section 3.11)
-            pc_reg <= 32'h0000_0000;
-            cpsr_reg <= 32'h0000_0000; // mode = User, I/F=0, etc.
-            for (i = 0; i < 8; i = i + 1) r_low[i]     <= 32'b0;
+    always @(posedge clk) begin
+        //if (!nrst) begin
+        //    // Asynchronous reset (Section 3.11)
+        //    pc_reg   <= 32'h0000_0000;
+        //    cpsr_reg <= 32'h0000_00D3; // SVC, I=1, F=1 per §2.7 / §3.9
+        //    for (i = 0; i < 8; i = i + 1) r_low[i] <= 32'b0;
+        //    for (i = 0; i < 5; i = i + 1) begin
+        //        r_mid[i]     <= 32'b0;
+        //        r_mid_fiq[i] <= 32'b0;
+        //        spsr_reg[i]  <= 32'b0;
+        //    end
+        //    for (i = 0; i < 6; i = i + 1) begin
+        //        r_sp_lr[i][0] <= 32'b0; // r13
+        //        r_sp_lr[i][1] <= 32'b0; // r14
+        //    end
+        //end else 
+        if (exception_rst) begin
+            // Synchronous reset triggered by a Reset-type exception entry
+            pc_reg   <= 32'h0000_0000;
+            //cpsr_reg <= 32'h0000_00D3;
+            cpsr_reg <= 32'h0000_0000;
+            for (i = 0; i < 8; i = i + 1) r_low[i] <= 32'b0;
             for (i = 0; i < 5; i = i + 1) begin
                 r_mid[i]     <= 32'b0;
                 r_mid_fiq[i] <= 32'b0;
                 spsr_reg[i]  <= 32'b0;
             end
             for (i = 0; i < 6; i = i + 1) begin
-                r_sp_lr[i][0] <= 32'b0; // r13
-                r_sp_lr[i][1] <= 32'b0; // r14
+                r_sp_lr[i][0] <= 32'b0;
+                r_sp_lr[i][1] <= 32'b0;
             end
         end else begin
             // GPR write (r0–r15)
@@ -181,8 +199,21 @@ module reg_bank (
             if (pc_we)
                 pc_reg <= cpsr_reg[5] ? {incrementer_wdata[31:1], 1'b0} : {incrementer_wdata[31:2], 2'b00};
 
-            if (link_f)
-                r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4) + low_high_off_f;
+            if (link_f) begin
+                if (exception_entry) begin
+                    case (exception_type)
+                        3'd1: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4); // Undefined
+                        3'd2: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4); // Supervisor (SWI)
+                        3'd3: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd4; // Prefetch Abort
+                        3'd4: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd8; // Data Abort
+                        3'd6: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd4; // IRQ
+                        3'd7: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd4; // FIQ
+                        default: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4) + low_high_off_f;
+                    endcase
+                end else begin
+                    r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4) + low_high_off_f;
+                end                
+            end
 
             // Dedicated Thumb Set
             if (set_thumb) begin
