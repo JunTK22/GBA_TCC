@@ -1,5 +1,6 @@
 module seg_display (
     input   wire [31:0] in,
+    input   wire clk,
 
     output  wire [6:0] s0,
     output  wire [6:0] s1,
@@ -33,11 +34,16 @@ function reg [6:0] seg;
     end
 endfunction
 
-assign s0 = ~seg(in[3:0]);
-assign s1 = ~seg(in[7:4]);
-assign s2 = ~seg(in[11:8]);
-assign s3 = ~seg(in[15:12]);
-assign s4 = ~seg(in[19:16]);
-assign s5 = ~seg(in[23:20]);
+reg [31:0] in_r;
+always @(posedge clk) begin
+    in_r <= in;
+end
+
+assign s0 = ~seg(in_r[3:0]);
+assign s1 = ~seg(in_r[7:4]);
+assign s2 = ~seg(in_r[11:8]);
+assign s3 = ~seg(in_r[15:12]);
+assign s4 = ~seg(in_r[19:16]);
+assign s5 = ~seg(in_r[23:20]);
 
 endmodule

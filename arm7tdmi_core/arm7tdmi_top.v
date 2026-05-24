@@ -74,6 +74,9 @@ module arm7tdmi_top (
     wire [2:0] exception_type;
     wire       exception_req;
     wire       exception_entry;
+    wire       exception_rst;
+    wire       exc_I_set;
+    wire       exc_F_set;
 
     always @(*) begin
         if (exception_entry) begin
@@ -237,16 +240,18 @@ module arm7tdmi_top (
 
     reg_bank reg_bank (
         .clk          (clk),
-        .reset_n      (reset_n),
+        //.nrst         (1'b1),
         .cpsr_mode    (cpsr_mode),
 
-        .writeback_addr (writeback_addr),
-        .writeback_en (writeback_en),
+        .writeback_addr  (writeback_addr),
+        .writeback_en    (writeback_en),
+        .exception_rst   (exception_rst),
         .exception_entry (exception_entry),
+        .exception_type  (exception_type),
         .exc_I_set (exc_I_set),
         .exc_F_set (exc_F_set),
 
-        .link_f       (link_f),
+        .link_f         (link_f),
         .low_high_off_f (low_high_off_f),
 
         .ra           (Rn_addr),
@@ -322,8 +327,6 @@ module arm7tdmi_top (
         .data_in  (wr_data),
         .we       (wr_data_reg_en),
         .nRW      (core_nRW),
-        .MAS      (MAS),
-        .signEx_f (signEx_f),
         .data_out (DOUT),
         .nENOUT   (nENOUT),
         .data_bus_oe ()
@@ -336,9 +339,9 @@ module arm7tdmi_top (
         .Rn             (Rn_data),
 
         .CLK            (clk),
-        .nRST           (reset_n),
-        .ABE            (),
-        .ALE            (),
+        //.nRST           (reset_n),
+        //.ABE            (),
+        //.ALE            (),
         .Addr_reg_sel   (addr_reg_sel),
         .Addr_reg_en    (addr_reg_en),
 
@@ -360,16 +363,20 @@ module arm7tdmi_top (
         .CPSR               (CPSR),
         .SPSR               (SPSR),
         .CLK                (clk),
-        .pipeline_rst_n     (reset_n),
+        .nrst               (reset_n),
         .addr_odd           (A[1]),
 
         .nIRQ               (nIRQ),
         .nFIQ               (nFIQ),
         .ABORT              (ABORT),
 
+        .exc_I_set          (exc_I_set),
+        .exc_F_set          (exc_F_set),
+
         .exception_type     (exception_type),
         .exception_req      (exception_req),
         .exception_entry    (exception_entry),
+        .exception_rst      (exception_rst),
 
         .nzcv               (nzcv),
         .reg_cond_field     (Alu_bus[31:28]),

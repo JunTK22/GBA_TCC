@@ -5,9 +5,9 @@ module address_reg (
     input wire [31:0]   Rn,
 
     input wire          CLK,
-    input wire          nRST,
-    input wire          ABE, // Address Bus Enable (Low => Address Bus goes into high impedance)
-    input wire          ALE, // Address Latch Enable
+    //input wire          nRST,
+    //input wire          ABE, // Address Bus Enable (Low => Address Bus goes into high impedance)
+    //input wire          ALE, // Address Latch Enable
     input wire [1:0]    Addr_reg_sel,
     input wire          Addr_reg_en,
 
@@ -32,10 +32,11 @@ always @(*) begin
     endcase
 end
 
-always @(posedge CLK or negedge nRST) begin
-    if (!nRST) begin
-        address_reg <= 32'h0000_0000;
-    end else if (Addr_reg_en) begin
+always @(posedge CLK) begin
+    //if (!nRST) begin
+    //    address_reg <= 32'h0000_0000;
+    //end else 
+    if (Addr_reg_en) begin
         address_reg <= address_i;
     end else begin
         address_reg <= address_reg;
