@@ -66,10 +66,11 @@ add wave -radix bin      sim:/arm7tdmi_project_sim/arm7tdmi_top/decoder/fiq_pend
 add wave -divider "Mode / PSR (reg_bank.v)"
 add wave -radix hex      sim:/arm7tdmi_project_sim/arm7tdmi_top/reg_bank/cpsr_reg
 add wave -radix hex      sim:/arm7tdmi_project_sim/arm7tdmi_top/reg_bank/spsr_reg
-add wave -radix unsigned sim:/arm7tdmi_project_sim/arm7tdmi_top/cpsr_mode
+add wave -radix hex      sim:/arm7tdmi_project_sim/arm7tdmi_top/cpsr_mode
 
 add wave -divider "Pipeline Snapshot"
 add wave -radix hex      sim:/arm7tdmi_project_sim/arm7tdmi_top/decoder/instruct_reg
+add wave -radix hex      sim:/arm7tdmi_project_sim/arm7tdmi_top/decoder/instruct_dec
 add wave -radix unsigned sim:/arm7tdmi_project_sim/arm7tdmi_top/Inst_decoded
 add wave -radix hex      sim:/arm7tdmi_project_sim/arm7tdmi_top/decoder/cycle_count
 
@@ -127,8 +128,8 @@ force -freeze sim:/arm7tdmi_project_sim/arm7tdmi_top/nFIQ 1 6200 ns
 # the prefetch path -- the program currently halts in `end_test` (B self),
 # so we have a steady fetch stream to abort.
 ###############################################################################
-# force -freeze sim:/arm7tdmi_project_sim/arm7tdmi_top/ABORT 0 9000 ns
-# force -freeze sim:/arm7tdmi_project_sim/arm7tdmi_top/ABORT 1 9100 ns
+force -freeze sim:/arm7tdmi_project_sim/arm7tdmi_top/ABORT 0 9000 ns
+force -freeze sim:/arm7tdmi_project_sim/arm7tdmi_top/ABORT 1 9100 ns
 
 ###############################################################################
 # 7.  RUN

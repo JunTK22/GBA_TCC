@@ -74,17 +74,17 @@ _start:
 @     0x3A00  ABT
 @ ==============================================================================
 reset_handler:
-    MSR     CPSR_c, #0xD1
+    MSR     CPSR, #0xD1
     MOV     SP,     #0x3C00      @ FIQ_SP
-    MSR     CPSR_c, #0xD2
+    MSR     CPSR, #0xD2
     MOV     SP,     #0x3D00      @ IRQ_SP
-    MSR     CPSR_c, #0xD7
+    MSR     CPSR, #0xD7
     MOV     SP,     #0x3A00      @ ABT_SP
-    MSR     CPSR_c, #0xDB
+    MSR     CPSR, #0xDB
     MOV     SP,     #0x3B00      @ UND_SP
-    MSR     CPSR_c, #0xD3
+    MSR     CPSR, #0xD3
     MOV     SP,     #0x3E00      @ SVC_SP
-    MSR     CPSR_c, #0x1F        @ System mode, IRQ + FIQ enabled
+    MSR     CPSR, #0x1F        @ System mode, IRQ + FIQ enabled
     MOV     SP,     #0x3F00      @ SYS_SP
 
 @ ==============================================================================
