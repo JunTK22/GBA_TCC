@@ -166,8 +166,7 @@ module reg_bank (
         if (exception_rst) begin
             // Synchronous reset triggered by a Reset-type exception entry
             pc_reg   <= 32'h0000_0000;
-            //cpsr_reg <= 32'h0000_00D3;
-            cpsr_reg <= 32'h0000_0000;
+            cpsr_reg <= 32'h0000_00D3;
             for (i = 0; i < 8; i = i + 1) r_low[i] <= 32'b0;
             for (i = 0; i < 5; i = i + 1) begin
                 r_mid[i]     <= 32'b0;
@@ -191,7 +190,8 @@ module reg_bank (
                 end else if (rd_addr < 15) begin
                     r_sp_lr[bank_idx(cpsr_mode)][rd_addr-13] <= write_data;
                 end else if (rd_addr == 15) begin
-                    pc_reg <= cpsr_reg[5] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
+                    if (PSR_wr_en && set_condition_f && spsr_idx(cpsr_mode) != -1) pc_reg <= spsr_reg[spsr_idx(cpsr_mode)][5] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
+                    else pc_reg <= cpsr_reg[5] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
                 end
             end
 
