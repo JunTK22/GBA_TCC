@@ -18,6 +18,7 @@ module iwram (
     input  wire [31:0] wdata,
     output wire [31:0] rdata,
     input  wire        we,
+    input  wire        rden,
     input  wire [1:0]  size,           // 00=byte 01=half 10=word
     input  wire        sign_extend,
     output wire        ready,
@@ -33,6 +34,7 @@ module iwram (
         .wdata          (wdata),
         .rdata          (rdata),
         .we             (we),
+        .rden           (rden),
         .size           (size),
         .sign_extend    (sign_extend),
         .ready          (ready),

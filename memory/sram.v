@@ -41,6 +41,7 @@ module sram #(
     input  wire [31:0]                wdata,          // write data (right-aligned)
     output reg  [31:0]                rdata,          // read  data (right-aligned)
     input  wire                       we,             // write enable
+    input  wire                       rden,             // write enable
     input  wire [1:0]                 size,           // 00=byte 01=half 10=word
     input  wire                       sign_extend,    // sign-extend on read
 
@@ -137,6 +138,7 @@ module sram #(
         .clk     (clk),
         .data    (wdata_shifted),
         .wren    (write_en),
+        .rden    (rden),
         .q       (read_data)
     );
 

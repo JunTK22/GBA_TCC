@@ -14,11 +14,12 @@
 `timescale 1ns / 1ps
 
 module bios #(
-    parameter INIT_FILE = "assembly_code/bios.mif"
+    parameter INIT_FILE = "code/assembly_code/bios.mif"
 )(
     input  wire        clk,
     input  wire [11:0] addr,        // word address (4096 32-bit words = 16 KB)
-    output wire [31:0] rdata
+    output wire [31:0] rdata,
+    input  wire        rden
 );
 
     M10K #(
@@ -31,6 +32,7 @@ module bios #(
         .clk     (clk),
         .data    (32'b0),
         .wren    (1'b0),
+        .rden    (rden),
         .q       (rdata)
     );
 

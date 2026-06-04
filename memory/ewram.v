@@ -12,10 +12,11 @@
 
 module ewram (
     input  wire        clk,
-    input  wire [17:0] addr,           // 256 KB byte address
+    input  wire [16:0] addr,           // 256 KB byte address
     input  wire [15:0] wdata,
     output wire [15:0] rdata,
     input  wire        we,
+    input  wire        rden,
     input  wire        size,           // 0=byte, 1=halfword
     input  wire        sign_extend,
     output wire        ready,
@@ -31,6 +32,7 @@ module ewram (
         .wdata          (wdata),
         .rdata          (rdata),
         .we             (we),
+        .rden           (rden),
         .size           (size),
         .sign_extend    (sign_extend),
         .ready          (ready),

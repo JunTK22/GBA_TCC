@@ -25,7 +25,8 @@ module cart_ram #(
     input  wire [DEPTH_POW2-1:0]      addr,     // byte address
     input  wire [7:0]                 wdata,
     output wire [7:0]                 rdata,
-    input  wire                       we
+    input  wire                       we,
+    input  wire                       rden
 );
 
     M10K #(

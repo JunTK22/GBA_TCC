@@ -9,6 +9,7 @@ module M10K #(
     input  wire                       clk,
     input  wire [WIDTH-1:0]           data,
     input  wire                       wren,
+    input  wire                       rden,
     output wire [WIDTH-1:0]           q
 );
 
@@ -40,13 +41,14 @@ altsyncram #(
       .byteena_a (byteena),
       .data_a    (data),
       .wren_a    (wren),
+      .rden_a    (rden),
       .q_a       (q),
       // tie-offs:
       .aclr0(1'b0), .aclr1(1'b0), .clock1(1'b1),
       .clocken0(1'b1), .clocken1(1'b1), .clocken2(1'b1), .clocken3(1'b1),
       .addressstall_a(1'b0), .addressstall_b(1'b0),
       .address_b(1'b1), .data_b(1'b1), .byteena_b(1'b1),
-      .wren_b(1'b0), .rden_a(1'b1), .rden_b(1'b1),
+      .wren_b(1'b0), .rden_b(1'b1),
       .q_b(), .eccstatus()
   );
 endmodule

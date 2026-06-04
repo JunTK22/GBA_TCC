@@ -36,6 +36,7 @@ module gba_ram_w16 #(
     input  wire [15:0]                wdata,
     output reg  [15:0]                rdata,
     input  wire                       we,
+    input  wire                       rden,
     input  wire                       size,           // 0=byte 1=half
     input  wire                       sign_extend,
 
@@ -100,6 +101,7 @@ module gba_ram_w16 #(
         .clk     (clk),
         .data    (wdata_shifted),
         .wren    (write_en),
+        .rden    (rden),
         .q       (read_data)
     );
 
