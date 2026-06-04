@@ -16,6 +16,7 @@ module palette_ram (
     input  wire [15:0] wdata,
     output wire [15:0] rdata,
     input  wire        we,
+    input  wire        rden,
     input  wire        size,           // 0=byte, 1=halfword
     input  wire        sign_extend,
     output wire        ready,
@@ -31,6 +32,7 @@ module palette_ram (
         .wdata          (wdata),
         .rdata          (rdata),
         .we             (we),
+        .rden           (rden),
         .size           (size),
         .sign_extend    (sign_extend),
         .ready          (ready),
