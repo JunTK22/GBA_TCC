@@ -78,7 +78,8 @@ parameter INIT_FILE  = "code/assembly_code/interrupt_test.mif";
 //  REG/WIRE declarations
 //=======================================================
 
-wire clock;
+wire clock = test_clk;
+wire clock_n = !test_clk;
 //assign clock = CLOCK_50;
 
 wire nrst;
@@ -267,7 +268,7 @@ Sdram_Control	Sdram_Control (
 	.WR_MAX_ADDR(25'h1ffffff),	// 525-18
 	.WR_LENGTH	(9'h80),	
 	.WR_LOAD	(1'b0),	
-	.WR_CLK		(clock),	
+	.WR_CLK		(clock_n),	
 	//	FIFO Read Side 
 	.RD_DATA	(data_pakrom),
 	.RD			(rden_pakrom),
@@ -275,7 +276,7 @@ Sdram_Control	Sdram_Control (
 	.RD_MAX_ADDR(25'h1ffffff),
 	.RD_LENGTH	(9'h80),
 	.RD_LOAD	(1'b0),
-	.RD_CLK		(clock),
+	.RD_CLK		(clock_n),
 	//	SDRAM Side
 	.SA			(DRAM_ADDR),
 	.BA			(DRAM_BA),
@@ -292,14 +293,14 @@ Sdram_Control	Sdram_Control (
 bios #(
     .INIT_FILE ("assembly_code/bios.mif")
 ) bios (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus[13:2]),        // word address (4096 32-bit words = 16 KB)
     .rdata	(data_bios),
     .rden	(rden_bios)
 );
 
 ewram ewram (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus),           // 256 KB byte address
     .wdata	(data_bus),
     .rdata	(data_ewram),
@@ -312,7 +313,7 @@ ewram ewram (
 );
 
 iwram iwram (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus),           // 32 KB byte address
     .wdata	(data_bus),
     .rdata	(data_iwram),
@@ -325,7 +326,7 @@ iwram iwram (
 );
 
 palette_ram palette_ram (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus),           // 1 KB byte address
     .wdata	(data_bus),
     .rdata	(data_palram),
@@ -338,7 +339,7 @@ palette_ram palette_ram (
 );
 
 vram vram (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus),           // 128 KB byte address
     .wdata	(data_bus),
     .rdata	(data_vram),
@@ -351,7 +352,7 @@ vram vram (
 );
 
 oam oam (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus),            // 1 KB byte address
     .wdata	(data_bus),
     .rdata	(data_oam),
@@ -364,7 +365,7 @@ oam oam (
 );
 
 cart_ram cart_ram (
-    .clk	(!clock),
+    .clk	(clock_n),
     .addr	(addr_bus),     // byte address
     .wdata	(data_bus),
     .rdata	(data_cartram),
@@ -373,7 +374,7 @@ cart_ram cart_ram (
 );
 
 io_registers io_registers (
-    .clk	(!clock),
+    .clk	(clock_n),
     .reset_n	(nrst),
     //---------------- CPU bus ----------------
     .addr	(addr_bus[9:0]),       // byte address within 1 KB IO space
@@ -497,7 +498,7 @@ dma dma0 (
 //);
 
 seg_display seg_display(
-    .in(r[4'd15]),
+    .in(addr_bus),
 	.clk (clock),
 
     .s0(HEX0),
@@ -530,10 +531,10 @@ always @(posedge pll_clk or posedge startup_rst) begin
     else if (count == 32'd249_999)   test_clk <= ~test_clk;
 end
 
-clkctrl_cpu clkctrl_cpu (
-	.inclk  (test_clk),  //  altclkctrl_input.inclk
-	.outclk (clock)  // altclkctrl_output.outclk
-);
+//clkctrl_cpu clkctrl_cpu (
+//	.inclk  (test_clk),  //  altclkctrl_input.inclk
+//	.outclk (clock)  // altclkctrl_output.outclk
+//);
 
 //genvar i;
 //generate

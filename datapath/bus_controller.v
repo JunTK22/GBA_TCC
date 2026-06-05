@@ -46,17 +46,7 @@ always @(*) begin
 	we_oam	 	= 0;
 	we_pakrom	= 0;
 	we_cartram	= 0;
-
-	rden_bios	= 0;
-	rden_ewram	= 0;
-	rden_iwram	= 0;
-	rden_palram	= 0;
-	rden_vram	= 0;
-	rden_oam	= 0;
-	rden_pakrom	= 0;
-	rden_cartram= 0;
 	if (nRW) begin
-		data_o = data_main;
 		case (mem_section) 
 			4'h2: we_ewram	 = 1;	//EWRAM
 			4'h3: we_iwram	 = 1;	//IWRAM
@@ -74,6 +64,43 @@ always @(*) begin
 			4'hF: we_cartram = 1;	//CART_RAM
 			default:;
 		endcase
+	end
+end
+
+always @(*) begin
+	rden_bios	= 0;
+	rden_ewram	= 0;
+	rden_iwram	= 0;
+	rden_palram	= 0;
+	rden_vram	= 0;
+	rden_oam	= 0;
+	rden_pakrom	= 0;
+	rden_cartram= 0;
+	if (~nRW) begin
+		case (mem_section) 
+			4'h0: rden_bios 	= 1;	//BIOS
+			4'h1: rden_bios 	= 1;	//BIOS
+			4'h2: rden_ewram 	= 1;	//EWRAM
+			4'h3: rden_iwram 	= 1;	//IWRAM
+			4'h5: rden_palram 	= 1;	//PAL_RAM
+			4'h6: rden_vram 	= 1;	//VRAM
+			4'h7: rden_oam 		= 1;	//OAM
+			4'h8: rden_pakrom 	= 1;	//PAK_ROM
+			4'h9: rden_pakrom 	= 1;	//PAK_ROM
+			4'hA: rden_pakrom 	= 1;	//PAK_ROM
+			4'hB: rden_pakrom 	= 1;	//PAK_ROM
+			4'hC: rden_pakrom 	= 1;	//PAK_ROM
+			4'hD: rden_pakrom 	= 1;	//PAK_ROM
+			4'hE: rden_cartram 	= 1;	//CART_RAM
+			4'hF: rden_cartram 	= 1;	//CART_RAM
+			default:;
+		endcase
+	end
+end
+
+always @(*) begin
+	if (nRW) begin
+		data_o = data_main;
 	end else begin
 		case (mem_section) 
 			4'h0: data_o = data_bios;	//BIOS
@@ -92,25 +119,6 @@ always @(*) begin
 			4'hD: data_o = data_pakrom;	//PAK_ROM
 			4'hE: data_o = data_cartram;//CART_RAM
 			4'hF: data_o = data_cartram;//CART_RAM
-		endcase
-
-		case (mem_section) 
-			4'h0: rden_bios 	= 1;	//BIOS
-			4'h1: rden_bios 	= 1;	//BIOS
-			4'h2: rden_ewram 	= 1;	//EWRAM
-			4'h3: rden_iwram 	= 1;	//IWRAM
-			4'h5: rden_palram 	= 1;	//PAL_RAM
-			4'h6: rden_vram 	= 1;	//VRAM
-			4'h7: rden_oam 		= 1;	//OAM
-			4'h8: rden_pakrom 	= 1;	//PAK_ROM
-			4'h9: rden_pakrom 	= 1;	//PAK_ROM
-			4'hA: rden_pakrom 	= 1;	//PAK_ROM
-			4'hB: rden_pakrom 	= 1;	//PAK_ROM
-			4'hC: rden_pakrom 	= 1;	//PAK_ROM
-			4'hD: rden_pakrom 	= 1;	//PAK_ROM
-			4'hE: rden_cartram 	= 1;	//CART_RAM
-			4'hF: rden_cartram 	= 1;	//CART_RAM
-			default:;
 		endcase
 	end
 end
