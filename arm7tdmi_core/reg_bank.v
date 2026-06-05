@@ -32,7 +32,6 @@
 
 module reg_bank (
     input  wire        clk,
-//    input  wire        nrst,       // optional (PC=0 on reset, per 3.11)
     input  wire [4:0]  cpsr_mode,
 
     input  wire [31:0] writeback_addr,
@@ -148,21 +147,6 @@ module reg_bank (
     // =========================================================================
     integer i;
     always @(posedge clk) begin
-        //if (!nrst) begin
-        //    // Asynchronous reset (Section 3.11)
-        //    pc_reg   <= 32'h0000_0000;
-        //    cpsr_reg <= 32'h0000_00D3; // SVC, I=1, F=1 per §2.7 / §3.9
-        //    for (i = 0; i < 8; i = i + 1) r_low[i] <= 32'b0;
-        //    for (i = 0; i < 5; i = i + 1) begin
-        //        r_mid[i]     <= 32'b0;
-        //        r_mid_fiq[i] <= 32'b0;
-        //        spsr_reg[i]  <= 32'b0;
-        //    end
-        //    for (i = 0; i < 6; i = i + 1) begin
-        //        r_sp_lr[i][0] <= 32'b0; // r13
-        //        r_sp_lr[i][1] <= 32'b0; // r14
-        //    end
-        //end else 
         if (exception_rst) begin
             // Synchronous reset triggered by a Reset-type exception entry
             pc_reg   <= 32'h0000_0000;

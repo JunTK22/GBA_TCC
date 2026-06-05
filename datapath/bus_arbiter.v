@@ -11,11 +11,11 @@ module bus_arbiter (
     input wire  [31:0] data_dma2,
     input wire  [31:0] data_dma3,
 
-    output wire [1:0]  MAS_cpu,
-    output wire [1:0]  MAS_dma0,
-    output wire [1:0]  MAS_dma1,
-    output wire [1:0]  MAS_dma2,
-    output wire [1:0]  MAS_dma3,
+    input wire [1:0]  MAS_cpu,
+    input wire [1:0]  MAS_dma0,
+    input wire [1:0]  MAS_dma1,
+    input wire [1:0]  MAS_dma2,
+    input wire [1:0]  MAS_dma3,
 
     input wire         wr_en,
     input wire  [3:0]  dma_active,
