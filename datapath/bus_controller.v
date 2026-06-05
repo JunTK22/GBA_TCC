@@ -13,39 +13,50 @@ module bus_controller(
 	input  wire [31:0]	data_cartram,
 	input  wire [31:0]	data_main,
 
-	output reg  [31:0]	data_o,
+	output reg  [31:0]	data_o = 32'b0,
 
-	output reg			rden_bios,
-	output reg			rden_ewram,
-	output reg			rden_iwram,
-	output reg			rden_palram,
-	output reg			rden_vram,
-	output reg			rden_oam,
-	output reg			rden_pakrom,
-	output reg			rden_cartram,
+	output reg			rden_bios	 = 0,
+	output reg			rden_ewram	 = 0,
+	output reg			rden_iwram	 = 0,
+	output reg			rden_palram	 = 0,
+	output reg			rden_vram	 = 0,
+	output reg			rden_oam	 = 0,
+	output reg			rden_pakrom	 = 0,
+	output reg			rden_cartram = 0,
 
-	output reg	 		we_ewram,
-	output reg	 		we_iwram,
-	output reg	 		we_ioram,
-	output reg	 		we_palram,
-	output reg	 		we_vram,
-	output reg	 		we_oam,
-	output reg	 		we_cartram
+	output reg	 		we_ewram	 = 0,
+	output reg	 		we_iwram	 = 0,
+	output reg	 		we_ioram	 = 0,
+	output reg	 		we_palram	 = 0,
+	output reg	 		we_vram	 	 = 0,
+	output reg	 		we_oam	 	 = 0,
+	output reg	 		we_pakrom	 = 0,
+	output reg	 		we_cartram	 = 0
 );
 
 wire [3:0] mem_section;
 assign mem_section = rd_addr[27:24];
 
 always @(*) begin
+	we_ewram	= 0;
+	we_iwram	= 0;
+	we_ioram	= 0;
+	we_palram	= 0;
+	we_vram	 	= 0;
+	we_oam	 	= 0;
+	we_pakrom	= 0;
+	we_cartram	= 0;
+
+	rden_bios	= 0;
+	rden_ewram	= 0;
+	rden_iwram	= 0;
+	rden_palram	= 0;
+	rden_vram	= 0;
+	rden_oam	= 0;
+	rden_pakrom	= 0;
+	rden_cartram= 0;
 	if (nRW) begin
 		data_o = data_main;
-		we_ewram	= 0;
-		we_iwram	= 0;
-		we_ioram	= 0;
-		we_palram	= 0;
-		we_vram	 	= 0;
-		we_oam	 	= 0;
-		we_cartram	= 0;
 		case (mem_section) 
 			4'h2: we_ewram	 = 1;	//EWRAM
 			4'h3: we_iwram	 = 1;	//IWRAM
@@ -53,6 +64,12 @@ always @(*) begin
 			4'h5: we_palram	 = 1;	//PAL_RAM
 			4'h6: we_vram	 = 1;	//VRAM
 			4'h7: we_oam	 = 1;	//OAM
+			4'h8: we_pakrom	 = 1;	//PAK_ROM
+			4'h9: we_pakrom	 = 1;	//PAK_ROM
+			4'hA: we_pakrom	 = 1;	//PAK_ROM
+			4'hB: we_pakrom	 = 1;	//PAK_ROM
+			4'hC: we_pakrom	 = 1;	//PAK_ROM
+			4'hD: we_pakrom	 = 1;	//PAK_ROM
 			4'hE: we_cartram = 1;	//CART_RAM
 			4'hF: we_cartram = 1;	//CART_RAM
 			default:;
@@ -76,14 +93,7 @@ always @(*) begin
 			4'hE: data_o = data_cartram;//CART_RAM
 			4'hF: data_o = data_cartram;//CART_RAM
 		endcase
-		rden_bios	= 0;
-		rden_ewram	= 0;
-		rden_iwram	= 0;
-		rden_palram	= 0;
-		rden_vram	= 0;
-		rden_oam	= 0;
-		rden_pakrom	= 0;
-		rden_cartram= 0;
+
 		case (mem_section) 
 			4'h0: rden_bios 	= 1;	//BIOS
 			4'h1: rden_bios 	= 1;	//BIOS

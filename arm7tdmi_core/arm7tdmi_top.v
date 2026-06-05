@@ -1,6 +1,8 @@
 module arm7tdmi_top (
-    input  wire        clk,
+    input  wire        MCLK,
     input  wire        reset_n,
+
+    input  wire        nWAIT,
 
     // === External Memory Interface (Section 6) ===============================
     input  wire [31:0] DIN,          // Data from memory (read)
@@ -42,6 +44,8 @@ module arm7tdmi_top (
     output wire [31:0] r14,
     output wire [31:0] r15
 );
+
+    wire clk = MCLK && nWAIT;
 
     // A Bus Input Selector Params
     parameter	Rn = 2'b00;
@@ -240,7 +244,6 @@ module arm7tdmi_top (
 
     reg_bank reg_bank (
         .clk          (clk),
-        //.nrst         (1'b1),
         .cpsr_mode    (cpsr_mode),
 
         .writeback_addr  (writeback_addr),
@@ -339,7 +342,6 @@ module arm7tdmi_top (
         .Rn             (Rn_data),
 
         .CLK            (clk),
-        //.nRST           (reset_n),
         //.ABE            (),
         //.ALE            (),
         .Addr_reg_sel   (addr_reg_sel),
