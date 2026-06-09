@@ -1,29 +1,29 @@
 @ ==============================================================================
 @ bus_test.s — Bus controller / bus arbiter / SDRAM controller bring-up test
-@ Targets the GBA datapath wired in gba_rev0.v:
-@     arm7tdmi_top -> bus_arbiter -> bus_controller -> {region RAMs, SDRAM}
 @
-@ Each phase exercises one subsystem and parks the PC in a uniquely-addressed
-@ spin loop so the outcome is visible on HEX0-5 (r15) on hardware, while also
-@ stamping a marker register (r0/r4/r9/r10/r11) for waveform / SignalTap.
+@ Datapath under test (gba_rev0.v):
+@     arm7tdmi_top -> bus_arbiter -> bus_controller -> { on-chip region RAMs,
+@                                                        Sdram_Control (PAK_ROM) }
 @
-@ --------------------------------------------------------------------------
-@ KNOWN INTEGRATION LIMITS this test was written around (see chat notes):
-@   * Region RAM data ports are 16-bit (8-bit for CART_RAM) on a 32-bit bus,
-@     and `.size(MAS)` truncates to MAS[0]. => use STRH/LDRH (STRB/LDRB for
-@     CART_RAM); word accesses to these regions mistranslate. The verify masks
-@     loaded values to the port width because DIN's upper bits are undriven.
-@   * SDRAM (PAK_ROM): `external_sdram` is a 1-bit implicit net and the
-@     controller's RD_ADDR is hardwired to 0 (FIFO-streaming, not random
-@     access). Phase 2 is therefore OBSERVE-ONLY — it cannot self-check.
-@   * The bus arbiter only leaves CPU-passthrough while a DMA owns the bus,
-@     but there is no CPU bus-hold (nWAIT/nMREQ open). On the current hardware
-@     the DMA trigger hijacks the address bus and the CPU pipeline derails, so
-@     Phase 3's verify is reliable only under a sim/wrapper that stalls the
-@     CPU. r10/r11 mark progress regardless.
-@   * NOTE: running this requires bios.mif to exist AND the BIOS fetch-address
-@     bug fixed (gba_rev0.v passes a byte address where bios.v wants a word
-@     address: `.addr(addr_bus[13:2])`). Until then nothing executes from BIOS.
+@ Three phases, in the order requested (bus controller -> arbiter -> SDRAM).
+@ Each terminal state is a uniquely-addressed spin loop so the outcome is
+@ visible on HEX0-5 (r15) on hardware; marker registers (r6/r7/r9/r10/r11)
+@ stamp progress for SignalTap / waveform inspection.
+@
+@ ------------------------------------------------------------------------------
+@ RUN PREREQUISITES — this file only *assembles*; runtime is HARDWARE-ONLY:
+@   * bios.mif must exist and the BIOS fetch-address handling in gba_rev0.v
+@     must be correct, or nothing executes (the CPU boots at 0x0 = BIOS region).
+@   * No SDRAM device model exists in-tree and the sim wrapper uses flat SRAM,
+@     so none of these three subsystems is simulatable; Phase 3 in particular is
+@     validated only against the DE1-SoC's physical SDRAM.
+@
+@ ACCESS-WIDTH constraints (region port widths bridged onto the 32-bit bus):
+@   * EWRAM / PAL / VRAM / OAM = 16-bit ports -> use STRH/LDRH.
+@   * IWRAM                    = 32-bit port  -> STRH used here for uniformity.
+@   * CART_RAM                 =  8-bit port  -> use STRB/LDRB.
+@   Read-backs are masked to the port width because DIN's unused upper bits are
+@   undriven on these regions.
 @ ==============================================================================
 
     .arch   armv4t
@@ -31,9 +31,7 @@
     .section .text
     .global  _start
 
-@ ------------------------------------------------------------------------------
-@ Exception vector table (first 32 bytes). Unexpected exceptions park in `trap`.
-@ ------------------------------------------------------------------------------
+@ ---- exception vector table (unexpected exceptions park in `trap`) -----------
 _start:
     B   reset_handler        @ 0x00 Reset
     B   trap                 @ 0x04 Undefined
@@ -54,10 +52,10 @@ reset_handler:
 
 @ ==============================================================================
 @ PHASE 1 — BUS CONTROLLER  (self-checking)
-@   Write a distinct sentinel to every writable region, THEN read them all
-@   back. Distinct values + write-all-before-read-all catches mis-routed write
-@   strobes, a mis-muxed read path, and stuck/duplicated write-enables. This
-@   also exercises the arbiter's CPU-passthrough path for free.
+@   Write a distinct sentinel to every writable on-chip region, THEN read them
+@   all back. Distinct values + write-all-before-read-all catches mis-routed
+@   write strobes (we_*), a mis-muxed read path (data_o), and stuck/duplicated
+@   write-enables. Also exercises the arbiter's CPU-passthrough mux for free.
 @ ==============================================================================
 
 @ ---- write phase (halfword regions; CART_RAM is an 8-bit port -> byte) -------
@@ -136,23 +134,22 @@ reset_handler:
     CMP     R2, #0xEE
     BNE     fail_cartram
 
-    MOV     R4, #0x6000
-    ORR     R4, R4, #0x0D        @ R4 = 0x600D : BUS CONTROLLER PASSED
+    MOV     R10, #0xB000
+    ORR     R10, R10, #0x05      @ R10 = 0xB005 : BUS CONTROLLER PASSED
 
 @ ==============================================================================
-@ PHASE 2 — SDRAM CONTROLLER  (observe-only)
-@   Issue a read from PAK_ROM. Drives rden_pakrom + the SDRAM read path. NOT
-@   self-checking (see header). R9 captures whatever the controller returns.
-@ ==============================================================================
-    MOV     R0, #0x08000000
-    LDRH    R9, [R0]             @ observe-only: value is not the addressed word
-
-@ ==============================================================================
-@ PHASE 3 — BUS ARBITER via DMA0  (setup + trigger; best-effort verify)
+@ PHASE 2 — BUS ARBITER via DMA0  (grant-mux exercise; best-effort data check)
 @   Program DMA0 to copy 4 halfwords EWRAM(0x02000010)->IWRAM(0x03000010) with
-@   immediate timing, then trigger it. The arbiter's DMA-grant mux only engages
-@   while dma_active is high. CAVEAT: no CPU bus-hold -> the verify below is
-@   trustworthy only in sim/wrapper that stalls the CPU (see header).
+@   immediate timing, then trigger it. While dma_active is high the arbiter must
+@   switch addr_bus / data_main / MAS from the CPU over to DMA0, and the top's
+@   `nWAIT <= (dma_active==0)` freezes the CPU (core gates `clk = MCLK & nWAIT`)
+@   for the whole transfer, so the post-DMA read sees a settled result.
+@
+@   CAVEAT (current RTL): bus_controller's we_*/rden_* are decoded from the CPU's
+@   nRW, which is NOT muxed with the DMA's wr_en. The arbiter grant-mux is still
+@   exercised, but the end-to-end DMA *data* copy may not land. The compare
+@   below is therefore BEST-EFFORT: it stamps R7 (0x0D ok / 0xAD not) and R11
+@   (observed dst), then CONTINUES to Phase 3 — it does not park.
 @ ==============================================================================
 
 @ ---- fill EWRAM source buffer 0x02000010.. with A001,A002,A003,A004 ----------
@@ -183,39 +180,97 @@ reset_handler:
     ADD     R1, R1, #0x10        @ dst = 0x03000010
     STR     R1, [R0, #4]         @ DMA0DAD
 
-    MOV     R10, #0xDD
-    ORR     R10, R10, #0xDD00    @ R10 = 0xDDDD : DMA armed
-
-@ DMA0CNT (word @0x040000B8): low half = CNT_L = count(4), high half = CNT_H =
-@ 0x8000 (enable | immediate timing | 16-bit). The write itself triggers DMA.
+@ DMA0CNT (word @0x040000B8): low half = CNT_L = count(4); high half = CNT_H =
+@ 0x8000 (enable | immediate timing | 16-bit | src/dst increment). The write
+@ itself triggers the channel.
     MOV     R1, #0x80000000
     ORR     R1, R1, #0x04        @ 0x80000004
     STR     R1, [R0, #8]         @ DMA0CNT  <-- trigger
+
+    NOP                          @ slack for the nWAIT gating window + transfer
+    NOP
+    NOP
+    NOP
 
 @ ---- best-effort verify: dst[0] should equal src[0] (0xA001) -----------------
     MOV     R0, #0x03000000
     ADD     R0, R0, #0x10
     LDRH    R11, [R0]
-    AND     R11, R11, R3
+    AND     R11, R11, R3         @ R11 = observed DMA dst[0]
     MOV     R1, #0xA000
     ORR     R1, R1, #0x01        @ 0xA001
     CMP     R11, R1
-    BEQ     dma_pass
-    B       dma_fail
+    BEQ     dma_ok
+    MOV     R7, #0xAD            @ R7 = 0xAD : DMA data NOT verified (see CAVEAT)
+    B       sdram_phase
+dma_ok:
+    MOV     R7, #0x0D            @ R7 = 0x0D : DMA data verified
 
 @ ==============================================================================
-@ Result spin loops — distinct addresses (r15/HEX) + distinct r0 codes.
+@ PHASE 3 — SDRAM CONTROLLER  (ROM-load burst write + read-back, self-checking)
+@   The Terasic Sdram_Control is a FIFO/burst STREAMING controller, not random
+@   access: WR_LOAD/RD_LOAD are tied 0 (per-access addresses ignored) and an
+@   internal `flag` gates ALL SDRAM traffic until the write FIFO holds
+@   WR_LENGTH = 128 words. So a single word write/read-back cannot self-check.
+@
+@   Instead we LOAD 128 halfwords into PAK_ROM — i.e. write the ROM image into
+@   SDRAM, the valid operation needed to populate the game ROM. That fills the
+@   write FIFO, sets `flag`, and triggers exactly one 128-word WRITEA burst to
+@   the DRAM chip. We then read 128 halfwords back. The write and read pointers
+@   both reset to the same base and have not incremented, so the burst we read
+@   back IS the burst we wrote: the Nth word read == Nth word written
+@   (correspondence is by FIFO order, not by CPU address).
+@
+@   ASSUMPTION: exactly one FIFO push per STRH and one pop per LDRH. `clock` and
+@   `clock_n` are the same ~100 Hz reg inverted, so there is one clock_n edge
+@   per CPU memory cycle -> one push/pop per access. A stream shift would show
+@   up here as a read-back mismatch on otherwise-working hardware.
+@   Pattern: value(i) = 0xC000 + i, for i = 0..127.
 @ ==============================================================================
-dma_pass:
-    MOV     R0, #0x6000
-    ORR     R0, R0, #0x0D        @ R0 = 0x600D : all phases reached, DMA verified
-    B       dma_pass
+sdram_phase:
+@ ---- write 128 halfwords -> one full WR burst is committed to SDRAM ----------
+    MOV     R0, #0x08000000      @ PAK_ROM base (SDRAM)
+    MOV     R5, #0xC000          @ value = 0xC000 + i
+    MOV     R4, #0               @ i = 0
+sdram_wr_loop:
+    STRH    R5, [R0]             @ push one halfword into WR FIFO (we_pakrom)
+    ADD     R0, R0, #2
+    ADD     R5, R5, #1
+    ADD     R4, R4, #1
+    CMP     R4, #128             @ exactly WR_LENGTH = 128 pushes -> one burst
+    BNE     sdram_wr_loop
 
-dma_fail:
-    MOV     R0, #0xB00
-    ORR     R0, R0, #0xAD        @ R0 = 0xBAD : DMA dst != src (or CPU derailed)
-    B       dma_fail
+@ ---- read 128 halfwords back and compare in FIFO order -----------------------
+    MOV     R0, #0x08000000
+    MOV     R5, #0xC000
+    MOV     R4, #0
+sdram_rd_loop:
+    LDRH    R2, [R0]             @ pop one halfword from RD FIFO (rden_pakrom)
+    AND     R2, R2, R3
+    MOV     R9, R2               @ R9 = last value read back (debug)
+    CMP     R2, R5
+    BNE     fail_sdram
+    ADD     R0, R0, #2
+    ADD     R5, R5, #1
+    ADD     R4, R4, #1
+    CMP     R4, #128
+    BNE     sdram_rd_loop
 
+    MOV     R6, #0x5D00
+    ORR     R6, R6, #0x0D        @ R6 = 0x5D0D : SDRAM PASSED
+
+@ ==============================================================================
+@ All phases reached. Park with a global PASS code. R7 still encodes whether the
+@ best-effort DMA data copy verified (0x0D = yes, 0xAD = no).
+@ ==============================================================================
+all_pass:
+    MOV     R0, #0x600
+    ORR     R0, R0, #0x0D        @ R0 = 0x60D : all phases PASSED
+    B       all_pass
+
+@ ==============================================================================
+@ Failure spin loops — distinct addresses (r15/HEX) + distinct r0 region codes.
+@ ==============================================================================
 fail_ewram:
     MOV     R0, #0x02
     B       fail_ewram
@@ -234,5 +289,8 @@ fail_oam:
 fail_cartram:
     MOV     R0, #0x0E
     B       fail_cartram
+fail_sdram:
+    MOV     R0, #0x5D            @ R9 holds the mismatching value read back
+    B       fail_sdram
 
     .end
