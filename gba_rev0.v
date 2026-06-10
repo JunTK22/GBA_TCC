@@ -88,7 +88,8 @@ wire tap_en;
 
 wire [31:0] r [0:15];
 
-wire pll_clk;
+wire clock_cpu;
+wire clock_sdram;
 wire pll_lock;
 reg test_clk = 0;
 //assign clock = test_clk;
@@ -257,38 +258,31 @@ bus_arbiter bus_arbiter (
     .MAS           (MAS)
 );
 
-Sdram_Control	Sdram_Control (
-	//	HOST Side
-	.REF_CLK	(CLOCK_50),
-	.RESET_N	(nrst),
-	//	FIFO Write Side 
-	.WR_DATA	(data_bus),
-	.WR			(we_pakrom),	
-	.WR_ADDR	(addr_bus),	
-	.WR_MAX_ADDR(25'h1ffffff),	// 525-18
-	.WR_LENGTH	(9'h80),	
-	.WR_LOAD	(1'b0),	
-	.WR_CLK		(clock_n),	
-	//	FIFO Read Side 
-	.RD_DATA	(data_pakrom),
-	.RD			(rden_pakrom),
-	.RD_ADDR	(addr_bus),			// Read odd field and bypess blanking
-	.RD_MAX_ADDR(25'h1ffffff),
-	.RD_LENGTH	(9'h80),
-	.RD_LOAD	(1'b0),
-	.RD_CLK		(clock_n),
-	//	SDRAM Side
-	.SA			(DRAM_ADDR),
-	.BA			(DRAM_BA),
-	.CS_N		(DRAM_CS_N),
-	.CKE		(DRAM_CKE),
-	.RAS_N		(DRAM_RAS_N),
-	.CAS_N		(DRAM_CAS_N),
-	.WE_N		(DRAM_WE_N),
-	.DQ			(DRAM_DQ),
-	.DQM		({DRAM_UDQM,DRAM_LDQM}),
-	.SDR_CLK	(DRAM_CLK)
+sdram_controller_top sdram_controller(
+    .clock      (clock_n),
+    .clock_sdram(clock_sdram),
+    .nrst       (nrst),
+
+    .rd_en      (rden_pakrom),
+    .wr_en      (we_pakrom),
+	
+    .addr       (addr_bus),
+    .wr_data    (data_bus),
+    .rd_data    (data_pakrom),
+    .busy       (busy),
+    
+    .SA         (DRAM_ADDR),
+    .BA         (DRAM_BA),
+    .CS_N       (DRAM_CS_N),
+    .CKE        (DRAM_CKE),
+    .RAS_N      (DRAM_RAS_N),
+    .CAS_N      (DRAM_CAS_N),
+    .WE_N       (DRAM_WE_N),
+    .DQ         (DRAM_DQ),
+    .DQM        ({DRAM_UDQM,DRAM_LDQM})
 );
+
+assign DRAM_CLK = clock_sdram;
 
 bios #(
     .INIT_FILE ("assembly_code/bios.mif")
@@ -514,19 +508,20 @@ pll  pll(
 //	.rst	(~nrst|| SW[0]),
 	.rst	(SW[0]),
 
-	.outclk_0(pll_clk),
+	.outclk_0(clock_cpu),
+	.outclk_1(clock_sdram),
 	.locked  (pll_lock)
 );
 
 integer count = 0;
 wire startup_rst = SW[0] | ~pll_lock;
-always @(posedge pll_clk or posedge startup_rst) begin
+always @(posedge clock_cpu or posedge startup_rst) begin
 	if (startup_rst) count <= 0;
 	else if (count >= 32'd249_999) count <= 0;
 	else count <= count+1;
 end
 
-always @(posedge pll_clk or posedge startup_rst) begin
+always @(posedge clock_cpu or posedge startup_rst) begin
     if (startup_rst)                 test_clk <= 1'b0;
     else if (count == 32'd249_999)   test_clk <= ~test_clk;
 end
