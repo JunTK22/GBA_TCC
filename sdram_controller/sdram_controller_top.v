@@ -22,26 +22,6 @@
 // from http://www.opencores.org/lgpl.shtml
 //
 //////////////////////////////////////////////////////////////////////
-//
-// Clock-domain-crossing host wrapper for sdram_controller.
-//
-// The sdram_controller core runs in the clock_sdram domain and holds
-// exactly one transaction in flight (busy is high for the whole
-// ACT -> CAS -> READ/WRIT sequence; it samples rd_enable/wr_enable as a
-// level only while in IDLE). The CPU side runs in the slower `clock`
-// domain. A toggle req/ack handshake carries one request across and
-// brings completion back, so a single CPU request issues EXACTLY ONE
-// SDRAM transaction regardless of how long rd_en/wr_en is held.
-//
-// CPU-side contract (clock domain):
-//   - Present addr (+ wr_data for writes) and assert rd_en or wr_en.
-//     The request is taken on the rising edge of (rd_en | wr_en);
-//     wr_en wins if both are asserted on the same edge.
-//   - `ready` is low while a transaction is in flight and returns high
-//     when it completes; for reads, rd_data is valid on the cycle ready
-//     goes high. The CPU/bus MUST stall (e.g. via nWAIT) while ready==0.
-//
-//////////////////////////////////////////////////////////////////////
 
 module sdram_controller_top (
     input   wire        clock,        // CPU / core frequency
@@ -54,7 +34,7 @@ module sdram_controller_top (
 	input   wire [24:0] addr,
     input   wire [15:0] wr_data,
     output  wire [15:0] rd_data,
-    output  wire        ready,
+    output  wire        busy,
 
     output  wire [12:0] SA,
     output  wire [1:0]  BA,
@@ -63,140 +43,93 @@ module sdram_controller_top (
     output  wire        RAS_N,
     output  wire        CAS_N,
     output  wire        WE_N,
-    output  wire [15:0] DQ,
+    inout   wire [15:0] DQ,
     output  wire [1:0]  DQM
 );
 
-// ---- shared / core-facing nets ---------------------------------------
-wire        core_busy;
-wire        core_rd_ready;
+reg [24:0] addr_r = 0;
+reg [15:0] wr_data_r = 0;
+
+always @(posedge clock) begin
+    if (wr_en || rd_en) addr_r <= addr;
+    if (wr_en) wr_data_r <= wr_data;
+end
+
+// Read Data
+
 wire [15:0] rd_data_i;
+wire        rd_ready;
+reg [15:0]  rd_data_r0 = 0, rd_data_r1 = 0, rd_data_r2 = 0;
+reg         rd_ready_r0 = 0, rd_ready_r1 = 0;
 
-// ---- CPU clock domain registers --------------------------------------
-reg  [24:0] addr_h;
-reg  [15:0] wr_data_h;
-reg  [15:0] rd_data_h;
-reg         we_h;        // 1 = write, 0 = read
-reg         busy_cpu;
-reg         req_tgl;     // toggles once per accepted request
-reg         rd_en_d, wr_en_d;
-reg         ack_s1, ack_s2, ack_s3;   // ack toggle synchronizer (2 FF) + edge tap
+wire rd_ready_pulse = !rd_ready_r1 && rd_ready_r0;
 
-// ---- SDRAM clock domain registers ------------------------------------
-localparam W_IDLE = 2'd0,
-           W_REQ  = 2'd1,
-           W_RUN  = 2'd2;
-
-reg  [1:0]  wstate;
-reg         core_rd_en, core_wr_en;
-reg         ack_tgl;
-reg  [15:0] rd_data_s;
-reg         req_s1, req_s2, req_s3;   // req toggle synchronizer (2 FF) + edge tap
-
-// ======================================================================
-// CPU clock domain
-// ======================================================================
-wire start    = ((rd_en & ~rd_en_d) | (wr_en & ~wr_en_d)) & ~busy_cpu;
-wire ack_edge = ack_s2 ^ ack_s3; // XOR for edge detection
-
-always @(posedge clock or negedge nrst) begin
-    if (!nrst) begin
-        addr_h    <= 25'b0;
-        wr_data_h <= 16'b0;
-        rd_data_h <= 16'b0;
-        we_h      <= 1'b0;
-        busy_cpu  <= 1'b0;
-        req_tgl   <= 1'b0;
-        rd_en_d   <= 1'b0;
-        wr_en_d   <= 1'b0;
-        {ack_s3, ack_s2, ack_s1} <= 3'b0;
-    end else begin
-        rd_en_d <= rd_en;
-        wr_en_d <= wr_en;
-        {ack_s3, ack_s2, ack_s1} <= {ack_s2, ack_s1, ack_tgl};
-
-        if (start) begin
-            addr_h    <= addr;
-            wr_data_h <= wr_data;
-            we_h      <= wr_en;     // wr_en wins if both asserted
-            req_tgl   <= ~req_tgl;
-            busy_cpu  <= 1'b1;
-        end else if (ack_edge) begin
-            rd_data_h <= rd_data_s; // stable data, qualified by synchronized ack
-            busy_cpu  <= 1'b0;
-        end
-    end
+always @(posedge clock_sdram) begin
+    rd_ready_r0 <= rd_ready;
+    rd_ready_r1 <= rd_ready_r0;
+    rd_data_r0 <= rd_data_i;
+    rd_data_r1 <= rd_data_r0;
+    if (rd_ready_pulse) rd_data_r2 <= rd_data_r0;
 end
 
-assign rd_data = rd_data_h;
-assign ready   = ~busy_cpu & ~start;   // ~start avoids a false 'ready' on the accept cycle
+assign rd_data = rd_data_r2;
 
-// ======================================================================
-// SDRAM clock domain
-// ======================================================================
-wire req_edge = req_s2 ^ req_s3; // XOR for edge detection
+// Write/Read request-hold
 
-always @(posedge clock_sdram or negedge nrst) begin
-    if (!nrst) begin
-        wstate     <= W_IDLE;
-        core_rd_en <= 1'b0;
-        core_wr_en <= 1'b0;
-        ack_tgl    <= 1'b0;
-        rd_data_s  <= 16'b0;
-        {req_s3, req_s2, req_s1} <= 3'b0;
-    end else begin
-        {req_s3, req_s2, req_s1} <= {req_s2, req_s1, req_tgl};
-
-        case (wstate)
-            W_IDLE:
-                if (req_edge) begin
-                    // we_h / addr_h / wr_data_h are stable in the CPU domain
-                    // (held by busy_cpu) before req crosses, so sampling them
-                    // here is a safe data-with-synchronized-qualifier crossing.
-                    core_rd_en <= ~we_h;
-                    core_wr_en <=  we_h;
-                    wstate     <= W_REQ;
-                end
-
-            // Hold the enable as a level until the core accepts it (busy
-            // rises). This lets the core finish init or insert a pending
-            // refresh first, then take this command exactly once.
-            W_REQ:
-                if (core_busy) begin
-                    core_rd_en <= 1'b0;
-                    core_wr_en <= 1'b0;
-                    wstate     <= W_RUN;
-                end
-
-            // For reads, rd_ready pulses one cycle before busy falls, so the
-            // capture and the ack are separate, consecutive conditionals.
-            W_RUN: begin
-                if (core_rd_ready)
-                    rd_data_s <= rd_data_i;
-                if (!core_busy) begin
-                    ack_tgl <= ~ack_tgl;
-                    wstate  <= W_IDLE;
-                end
-            end
-
-            default: wstate <= W_IDLE;
-        endcase
-    end
+reg wr_en_r0 = 0, rd_en_r0 = 0;
+always @(posedge clock) begin
+    wr_en_r0 <= wr_en;
+    rd_en_r0 <= rd_en;
 end
+
+// 2-FF synchronizer (+1 stage for edge detect) into the SDRAM domain
+reg rd_s0 = 0, rd_s1 = 0, rd_s2 = 0;
+reg wr_s0 = 0, wr_s1 = 0, wr_s2 = 0;
+always @(posedge clock_sdram) begin
+    rd_s0 <= rd_en_r0; rd_s1 <= rd_s0; rd_s2 <= rd_s1;
+    wr_s0 <= wr_en_r0; wr_s1 <= wr_s0; wr_s2 <= wr_s1;
+end
+wire rd_edge = rd_s1 && !rd_s2;
+wire wr_edge = wr_s1 && !wr_s2;
+
+// "accept" = the cycle the core enters a transaction (core_busy rising edge)
+wire core_busy;
+reg core_busy_d = 0;
+always @(posedge clock_sdram) core_busy_d <= core_busy;
+wire accept = core_busy && !core_busy_d;
+
+// Hold each request until the core accepts it.
+reg rd_req = 0, wr_req = 0;
+always @(posedge clock_sdram)
+    if (!nrst) begin
+        rd_req <= 0;
+        wr_req <= 0;
+    end else begin
+        if (rd_edge)                          rd_req <= 1;
+        else if (accept && rd_req)            rd_req <= 0;
+
+        if (wr_edge)                          wr_req <= 1;
+        else if (accept && !rd_req && wr_req) wr_req <= 0;
+    end
+
+wire rd_en_pulse = rd_req;
+wire wr_en_pulse = wr_req;
+
+assign busy = core_busy && (wr_en_r0 || rd_en_r0);
 
 // ======================================================================
 // SDRAM controller core (clock_sdram domain)
 // ======================================================================
 sdram_controller sdram_controlleri (
     /* HOST INTERFACE */
-    .wr_addr       (addr_h),
-    .wr_data       (wr_data_h),
-    .wr_enable     (core_wr_en),
+    .wr_addr       (addr_r),
+    .wr_data       (wr_data_r),
+    .wr_enable     (wr_en_pulse),
 
-    .rd_addr       (addr_h),
+    .rd_addr       (addr_r),
     .rd_data       (rd_data_i),
-    .rd_ready      (core_rd_ready),
-    .rd_enable     (core_rd_en),
+    .rd_ready      (rd_ready),
+    .rd_enable     (rd_en_pulse),
 
     .busy          (core_busy),
     .rst_n         (nrst),
