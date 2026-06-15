@@ -12,9 +12,9 @@
 
 module ewram (
     input  wire        clk,
-    input  wire [16:0] addr,           // 256 KB byte address
+    input  wire [17:0] addr,           // 256 KB byte address
     input  wire [15:0] wdata,
-    output wire [15:0] rdata,
+    output wire [31:0] rdata,
     input  wire        we,
     input  wire        rden,
     input  wire        size,           // 0=byte, 1=halfword
@@ -23,14 +23,16 @@ module ewram (
     output wire        misalign_fault
 );
 
+    wire [15:0] rdata_mem;
+
     gba_ram_w16 #(
-        .DEPTH_POW2 (17),               // 2^17 = 131072 halfwords = 256 KB
+        .DEPTH_POW2 (16),               // 2^17 = 131072 halfwords = 256 KB
         .INIT_FILE  ("UNUSED")
     ) ewram_mem (
         .clk            (clk),
         .addr           (addr),
         .wdata          (wdata),
-        .rdata          (rdata),
+        .rdata          (rdata_mem),
         .we             (we),
         .rden           (rden),
         .size           (size),
@@ -38,5 +40,7 @@ module ewram (
         .ready          (ready),
         .misalign_fault (misalign_fault)
     );
+
+    assign rdata = {16'b0,rdata_mem};
 
 endmodule

@@ -19,7 +19,7 @@ module vram (
     input  wire        clk,
     input  wire [16:0] addr,           // 128 KB byte address
     input  wire [15:0] wdata,
-    output wire [15:0] rdata,
+    output wire [31:0] rdata,
     input  wire        we,
     input  wire        rden,
     input  wire        size,           // 0=byte, 1=halfword
@@ -29,15 +29,16 @@ module vram (
 );
 
 wire [16:0] addr_w = addr[16] ? {2'b10, addr[14:0]} : addr;
+wire [15:0] rdata_mem;
 
 gba_ram_w16 #(
-    .DEPTH_POW2 (16),               // 2^16 = 65536 halfwords = 128 KB
+    .DEPTH_POW2 (15),               // 2^16 = 65536 halfwords = 128 KB
     .INIT_FILE  ("UNUSED")
 ) vram_mem (
     .clk            (clk),
     .addr           (addr_w),
     .wdata          (wdata),
-    .rdata          (rdata),
+    .rdata          (rdata_mem),
     .we             (we),
     .rden           (rden),
     .size           (size),
@@ -45,5 +46,7 @@ gba_ram_w16 #(
     .ready          (ready),
     .misalign_fault (misalign_fault)
 );
+
+assign rdata = {16'b0,rdata_mem};
 
 endmodule

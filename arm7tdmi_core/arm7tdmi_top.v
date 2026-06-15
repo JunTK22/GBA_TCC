@@ -42,7 +42,8 @@ module arm7tdmi_top (
     output wire [31:0] r12,
     output wire [31:0] r13,
     output wire [31:0] r14,
-    output wire [31:0] r15
+    output wire [31:0] r15,
+    output wire [31:0] CPSR_o
 );
 
     wire clk = MCLK && nWAIT;
@@ -72,6 +73,7 @@ module arm7tdmi_top (
     reg [31:0] wr_data;
 
     wire [31:0] CPSR;
+    assign CPSR_o = CPSR;
 
     reg [4:0]  cpsr_mode;
 

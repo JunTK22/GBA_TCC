@@ -45,9 +45,9 @@ create_generated_clock -name test_clk \
 #      -invert \
 #      [get_nets clock_n]
 
-##create_generated_clock -name clk_dram \
-##      -source {Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk} \
-##      [get_ports DRAM_CLK]
+create_generated_clock -name clk_dram \
+      -source {pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk} \
+      [get_ports DRAM_CLK]
 
 set_clock_groups -asynchronous \
       -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk test_clk}
@@ -78,8 +78,8 @@ derive_clock_uncertainty
 # Set Input Delay
 #**************************************************************
 # Board Delay (Data) + Propagation Delay - Board Delay (Clock)
-set_input_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.048 [get_ports DRAM_DQ*]
-set_input_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.057 [get_ports DRAM_DQ*]
+#set_input_delay -max -clock clk_dram -0.048 [get_ports DRAM_DQ*]
+#set_input_delay -min -clock clk_dram -0.057 [get_ports DRAM_DQ*]
 
 
 
@@ -89,24 +89,24 @@ set_input_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera
 #**************************************************************
 # max : Board Delay (Data) - Board Delay (Clock) + tsu (External Device)
 # min : Board Delay (Data) - Board Delay (Clock) - th (External Device)
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.452  [get_ports DRAM_DQ*]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.857 [get_ports DRAM_DQ*]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.531 [get_ports DRAM_ADDR*]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.805 [get_ports DRAM_ADDR*]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.533  [get_ports DRAM_*DQM]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.805 [get_ports DRAM_*DQM]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.510  [get_ports DRAM_BA*]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.800 [get_ports DRAM_BA*]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.520  [get_ports DRAM_RAS_N]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.780 [get_ports DRAM_RAS_N]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.5000  [get_ports DRAM_CAS_N]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.800 [get_ports DRAM_CAS_N]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.545 [get_ports DRAM_WE_N]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.755 [get_ports DRAM_WE_N]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.496  [get_ports DRAM_CKE]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.804 [get_ports DRAM_CKE]
-set_output_delay -max -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk 1.508  [get_ports DRAM_CS_N]
-set_output_delay -min -clock Sdram_Control|sdram_pll0_inst|sdram_pll0_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk -0.792 [get_ports DRAM_CS_N]
+#set_output_delay -max -clock clk_dram 1.452  [get_ports DRAM_DQ*]
+#set_output_delay -min -clock clk_dram -0.857 [get_ports DRAM_DQ*]
+#set_output_delay -max -clock clk_dram 1.531 [get_ports DRAM_ADDR*]
+#set_output_delay -min -clock clk_dram -0.805 [get_ports DRAM_ADDR*]
+#set_output_delay -max -clock clk_dram 1.533  [get_ports DRAM_*DQM]
+#set_output_delay -min -clock clk_dram -0.805 [get_ports DRAM_*DQM]
+#set_output_delay -max -clock clk_dram 1.510  [get_ports DRAM_BA*]
+#set_output_delay -min -clock clk_dram -0.800 [get_ports DRAM_BA*]
+#set_output_delay -max -clock clk_dram 1.520  [get_ports DRAM_RAS_N]
+#set_output_delay -min -clock clk_dram -0.780 [get_ports DRAM_RAS_N]
+#set_output_delay -max -clock clk_dram 1.5000  [get_ports DRAM_CAS_N]
+#set_output_delay -min -clock clk_dram -0.800 [get_ports DRAM_CAS_N]
+#set_output_delay -max -clock clk_dram 1.545 [get_ports DRAM_WE_N]
+#set_output_delay -min -clock clk_dram -0.755 [get_ports DRAM_WE_N]
+#set_output_delay -max -clock clk_dram 1.496  [get_ports DRAM_CKE]
+#set_output_delay -min -clock clk_dram -0.804 [get_ports DRAM_CKE]
+#set_output_delay -max -clock clk_dram 1.508  [get_ports DRAM_CS_N]
+#set_output_delay -min -clock clk_dram -0.792 [get_ports DRAM_CS_N]
 
 set_output_delay -max -clock clk_vga 0.220 [get_ports VGA_R*]
 set_output_delay -min -clock clk_vga -1.506 [get_ports VGA_R*]

@@ -188,10 +188,10 @@ module reg_bank (
                     case (exception_type)
                         3'd1: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4); // Undefined
                         3'd2: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4); // Supervisor (SWI)
-                        3'd3: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd4; // Prefetch Abort
-                        3'd4: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd8; // Data Abort
-                        3'd6: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd4; // IRQ
-                        3'd7: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - 32'd4; // FIQ
+                        3'd3: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg; // Prefetch Abort
+                        3'd4: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg; // Data Abort
+                        3'd6: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg; // IRQ
+                        3'd7: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg; // FIQ
                         default: r_sp_lr[bank_idx(cpsr_mode)][1] <= pc_reg - (cpsr_reg[5] ? 32'd2 : 32'd4) + low_high_off_f;
                     endcase
                 end else begin
