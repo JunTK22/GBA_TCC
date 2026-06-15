@@ -17,12 +17,14 @@ module bus_arbiter (
     input wire [1:0]  MAS_dma2,
     input wire [1:0]  MAS_dma3,
 
-    input wire         wr_en,
+    input wire         nRW_CPU,
+    input wire         wr_en_dma,
     input wire  [3:0]  dma_active,
 
     output wire [31:0] addr_o,
     output wire [31:0] data_o,
-    output wire [1:0]  MAS
+    output wire [1:0]  MAS,
+    output wire        nRW
 );
 
 wire [31:0] addr_src =  dma_active[0] ? addr_src_dma0 :
@@ -49,7 +51,8 @@ assign      MAS     =   dma_active[0] ? MAS_dma0 :
                         dma_active[3] ? MAS_dma3 :
                         MAS_cpu;
 
-assign addr_o = wr_en ? addr_dst : addr_src;
+assign addr_o = wr_en_dma ? addr_dst : addr_src;
 assign data_o = data;
+assign nRW    = dma_active == 4'b0 ? nRW_CPU : wr_en_dma;
 
 endmodule

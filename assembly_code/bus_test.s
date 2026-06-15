@@ -3,7 +3,7 @@
 @
 @ Datapath under test (gba_rev0.v):
 @     arm7tdmi_top -> bus_arbiter -> bus_controller -> { on-chip region RAMs,
-@                                                        Sdram_Control (PAK_ROM) }
+@                                                        sdram_controller (PAK_ROM) }
 @
 @ Three phases, in the order requested (bus controller -> arbiter -> SDRAM).
 @ Each terminal state is a uniquely-addressed spin loop so the outcome is
@@ -21,6 +21,7 @@
 @ ACCESS-WIDTH constraints (region port widths bridged onto the 32-bit bus):
 @   * EWRAM / PAL / VRAM / OAM = 16-bit ports -> use STRH/LDRH.
 @   * IWRAM                    = 32-bit port  -> STRH used here for uniformity.
+@   * PAK_ROM / SDRAM          = 16-bit port  -> use STRH/LDRH.
 @   * CART_RAM                 =  8-bit port  -> use STRB/LDRB.
 @   Read-backs are masked to the port width because DIN's unused upper bits are
 @   undriven on these regions.
@@ -145,11 +146,10 @@ reset_handler:
 @   `nWAIT <= (dma_active==0)` freezes the CPU (core gates `clk = MCLK & nWAIT`)
 @   for the whole transfer, so the post-DMA read sees a settled result.
 @
-@   CAVEAT (current RTL): bus_controller's we_*/rden_* are decoded from the CPU's
-@   nRW, which is NOT muxed with the DMA's wr_en. The arbiter grant-mux is still
-@   exercised, but the end-to-end DMA *data* copy may not land. The compare
-@   below is therefore BEST-EFFORT: it stamps R7 (0x0D ok / 0xAD not) and R11
-@   (observed dst), then CONTINUES to Phase 3 — it does not park.
+@   CAVEAT: this still only exercises DMA0 with the currently integrated single
+@   channel and simple immediate timing. The compare below stamps R7 (0x0D ok /
+@   0xAD not) and R11 (observed dst), then CONTINUES to Phase 3 — it does not
+@   park, because the SDRAM test is independent.
 @ ==============================================================================
 
 @ ---- fill EWRAM source buffer 0x02000010.. with A001,A002,A003,A004 ----------
@@ -207,54 +207,86 @@ dma_ok:
     MOV     R7, #0x0D            @ R7 = 0x0D : DMA data verified
 
 @ ==============================================================================
-@ PHASE 3 — SDRAM CONTROLLER  (ROM-load burst write + read-back, self-checking)
-@   The Terasic Sdram_Control is a FIFO/burst STREAMING controller, not random
-@   access: WR_LOAD/RD_LOAD are tied 0 (per-access addresses ignored) and an
-@   internal `flag` gates ALL SDRAM traffic until the write FIFO holds
-@   WR_LENGTH = 128 words. So a single word write/read-back cannot self-check.
+@ PHASE 3 — SDRAM CONTROLLER  (random-access write + read-back, self-checking)
+@   Current RTL uses sdram_controller_top + sdram_controller: a 16-bit host
+@   interface where each STRH/LDRH issues one addressed SDRAM transaction. The
+@   top-level maps PAK_ROM accesses to this controller and feeds controller
+@   `busy` into nWAIT, so an SDRAM access either completes before the next CPU
+@   clock edge or stalls the CPU until completion.
 @
-@   Instead we LOAD 128 halfwords into PAK_ROM — i.e. write the ROM image into
-@   SDRAM, the valid operation needed to populate the game ROM. That fills the
-@   write FIFO, sets `flag`, and triggers exactly one 128-word WRITEA burst to
-@   the DRAM chip. We then read 128 halfwords back. The write and read pointers
-@   both reset to the same base and have not incremented, so the burst we read
-@   back IS the burst we wrote: the Nth word read == Nth word written
-@   (correspondence is by FIFO order, not by CPU address).
-@
-@   ASSUMPTION: exactly one FIFO push per STRH and one pop per LDRH. `clock` and
-@   `clock_n` are the same ~100 Hz reg inverted, so there is one clock_n edge
-@   per CPU memory cycle -> one push/pop per access. A stream shift would show
-@   up here as a read-back mismatch on otherwise-working hardware.
-@   Pattern: value(i) = 0xC000 + i, for i = 0..127.
+@   This phase writes distinct halfwords to nonconsecutive PAK_ROM offsets, then
+@   reads them back in a different order. That checks address use directly and
+@   avoids the old FIFO-streaming assumption. Offsets 0x400 and 0x800000 cross
+@   the controller's row and bank fields respectively.
 @ ==============================================================================
 sdram_phase:
-@ ---- write 128 halfwords -> one full WR burst is committed to SDRAM ----------
+@ ---- write distinct halfwords to addressed SDRAM locations --------------------
     MOV     R0, #0x08000000      @ PAK_ROM base (SDRAM)
-    MOV     R5, #0xC000          @ value = 0xC000 + i
-    MOV     R4, #0               @ i = 0
-sdram_wr_loop:
-    STRH    R5, [R0]             @ push one halfword into WR FIFO (we_pakrom)
-    ADD     R0, R0, #2
-    ADD     R5, R5, #1
-    ADD     R4, R4, #1
-    CMP     R4, #128             @ exactly WR_LENGTH = 128 pushes -> one burst
-    BNE     sdram_wr_loop
 
-@ ---- read 128 halfwords back and compare in FIFO order -----------------------
-    MOV     R0, #0x08000000
     MOV     R5, #0xC000
-    MOV     R4, #0
-sdram_rd_loop:
-    LDRH    R2, [R0]             @ pop one halfword from RD FIFO (rden_pakrom)
+    ORR     R5, R5, #0x11        @ 0xC011 @ offset 0x000000
+    STRH    R5, [R0]
+
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x22        @ 0xC022 @ offset 0x000002
+    STRH    R5, [R0, #2]
+
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x33        @ 0xC033 @ offset 0x000040
+    STRH    R5, [R0, #0x40]
+
+    ADD     R12, R0, #0x400
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x44        @ 0xC044 @ offset 0x000400 (next row)
+    STRH    R5, [R12]
+
+    ADD     R12, R0, #0x800000
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x55        @ 0xC055 @ offset 0x800000 (next bank)
+    STRH    R5, [R12]
+
+@ ---- read back in a different order to prove address-based storage ------------
+    ADD     R12, R0, #0x400
+    LDRH    R2, [R12]
     AND     R2, R2, R3
     MOV     R9, R2               @ R9 = last value read back (debug)
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x44
     CMP     R2, R5
     BNE     fail_sdram
-    ADD     R0, R0, #2
-    ADD     R5, R5, #1
-    ADD     R4, R4, #1
-    CMP     R4, #128
-    BNE     sdram_rd_loop
+
+    ADD     R12, R0, #0x800000
+    LDRH    R2, [R12]
+    AND     R2, R2, R3
+    MOV     R9, R2
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x55
+    CMP     R2, R5
+    BNE     fail_sdram
+
+    LDRH    R2, [R0, #2]
+    AND     R2, R2, R3
+    MOV     R9, R2
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x22
+    CMP     R2, R5
+    BNE     fail_sdram
+
+    LDRH    R2, [R0, #0x40]
+    AND     R2, R2, R3
+    MOV     R9, R2
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x33
+    CMP     R2, R5
+    BNE     fail_sdram
+
+    LDRH    R2, [R0]
+    AND     R2, R2, R3
+    MOV     R9, R2
+    MOV     R5, #0xC000
+    ORR     R5, R5, #0x11
+    CMP     R2, R5
+    BNE     fail_sdram
 
     MOV     R6, #0x5D00
     ORR     R6, R6, #0x0D        @ R6 = 0x5D0D : SDRAM PASSED

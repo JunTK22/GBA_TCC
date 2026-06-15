@@ -24,10 +24,12 @@ module cart_ram #(
     input  wire                       clk,
     input  wire [DEPTH_POW2-1:0]      addr,     // byte address
     input  wire [7:0]                 wdata,
-    output wire [7:0]                 rdata,
+    output wire [31:0]                rdata,
     input  wire                       we,
     input  wire                       rden
 );
+
+    wire [7:0] q;
 
     M10K #(
         .WIDTH      (8),
@@ -39,7 +41,10 @@ module cart_ram #(
         .clk     (clk),
         .data    (wdata),
         .wren    (we),
-        .q       (rdata)
+        .rden    (rden),
+        .q       (q)
     );
+
+    assign rdata = {24'b0,q};
 
 endmodule
