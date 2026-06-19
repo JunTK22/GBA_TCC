@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.6.4)  14 JUN 2026 10:24
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.6.4)  17 JUN 2026 21:26
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -356,11 +356,6 @@ File: pdftex.def 2025/09/29 v1.2d Graphics/color driver for pdftex
 \Gin@req@height=\dimen177
 \Gin@req@width=\dimen178
 )
-(/usr/share/texmf-dist/tex/latex/cite/cite.sty
-LaTeX Info: Redefining \cite on input line 302.
-LaTeX Info: Redefining \nocite on input line 332.
-Package: cite 2015/02/27  v 5.5
-)
 (/usr/share/texmf-dist/tex/latex/tools/enumerate.sty
 Package: enumerate 2023/07/04 v3.00 enumerate extensions (DPC)
 \@enLab=\toks33
@@ -702,36 +697,59 @@ File: pgflibraryarrows.meta.code.tex 2025-08-29 v3.1.11a (3.1.11a)
 (/usr/share/texmf-dist/tex/generic/pgf/frontendlayer/tikz/libraries/tikzlibrary
 calc.code.tex
 File: tikzlibrarycalc.code.tex 2025-08-29 v3.1.11a (3.1.11a)
+) (/usr/share/texmf-dist/tex/latex/abntex2/abntex2cite.sty
+Package: abntex2cite 2018/11/24 v-1.9.7 abnTeX2
+
+(/usr/share/texmf-dist/tex/latex/abntex2/abntex2abrev.sty)
+\minimumbiblabelwidth=\skip81
+\ABCIauxlen=\skip82
+\c@ABCIaux=\count340
+\c@ABCImax=\count341
+
+(/usr/share/texmf-dist/tex/generic/iftex/ifpdf.sty
+Package: ifpdf 2019/10/25 v3.4 ifpdf legacy package. Use iftex instead.
+)
+(/usr/share/texmf-dist/tex/generic/iftex/ifxetex.sty
+Package: ifxetex 2019/10/25 v0.7 ifxetex legacy package. Use iftex instead.
+)
+(/usr/share/texmf-dist/tex/latex/relsize/relsize.sty
+Package: relsize 2013/03/29 ver 4.1
+)
+\biblabelsep=\skip83
+LaTeX Info: Redefining \newblock on input line 591.
+LaTeX Info: Redefining \cite on input line 862.
+\ABCItoken=\toks46
 )
 LaTeX Font Info:    Trying to load font information for OT1+ptm on input line 3
-2.
- (/usr/share/texmf-dist/tex/latex/psnfss/ot1ptm.fd
+4.
+
+(/usr/share/texmf-dist/tex/latex/psnfss/ot1ptm.fd
 File: ot1ptm.fd 2001/06/04 font definitions for OT1/ptm.
 )
 (/usr/share/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def
 File: l3backend-pdftex.def 2025-10-09 L3 backend support: PDF output (pdfTeX)
-\l__color_backend_stack_int=\count340
+\l__color_backend_stack_int=\count342
 )
 (./monografia.aux
 Package babel Info: 'brazil' activates 'portuges' shorthands.
-(babel)             Reported on input line 5.
+(babel)             Reported on input line 6.
 )
 \openout1 = `monografia.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 32.
-LaTeX Font Info:    ... okay on input line 32.
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 34.
+LaTeX Font Info:    ... okay on input line 34.
 
 *geometry* driver: auto-detecting
 *geometry* detected driver: pdftex
@@ -769,17 +787,17 @@ LaTeX Font Info:    ... okay on input line 32.
 
 (/usr/share/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count341
+\scratchcounter=\count343
 \scratchdimen=\dimen303
 \scratchbox=\box112
-\nofMPsegments=\count342
-\nofMParguments=\count343
-\everyMPshowfont=\toks46
-\MPscratchCnt=\count344
+\nofMPsegments=\count344
+\nofMParguments=\count345
+\everyMPshowfont=\toks47
+\MPscratchCnt=\count346
 \MPscratchDim=\dimen304
-\MPnumerator=\count345
-\makeMPintoPDFobject=\count346
-\everyMPtoPDFconversion=\toks47
+\MPnumerator=\count347
+\makeMPintoPDFobject=\count348
+\everyMPtoPDFconversion=\toks48
 ) (/usr/share/texmf-dist/tex/latex/epstopdf-pkg/epstopdf-base.sty
 Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
 Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
@@ -794,34 +812,34 @@ e
 {/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map}{/usr/share/texmf-dist/fonts
 /enc/dvips/base/8r.enc}]
 LaTeX Font Info:    Trying to load font information for OT1+ztmcm on input line
- 35.
+ 37.
  (/usr/share/texmf-dist/tex/latex/psnfss/ot1ztmcm.fd
 File: ot1ztmcm.fd 2000/01/03 Fontinst v1.801 font definitions for OT1/ztmcm.
 )
 LaTeX Font Info:    Trying to load font information for OML+ztmcm on input line
- 35.
+ 37.
 
 (/usr/share/texmf-dist/tex/latex/psnfss/omlztmcm.fd
 File: omlztmcm.fd 2000/01/03 Fontinst v1.801 font definitions for OML/ztmcm.
 )
 LaTeX Font Info:    Trying to load font information for OMS+ztmcm on input line
- 35.
+ 37.
 
 (/usr/share/texmf-dist/tex/latex/psnfss/omsztmcm.fd
 File: omsztmcm.fd 2000/01/03 Fontinst v1.801 font definitions for OMS/ztmcm.
 )
 LaTeX Font Info:    Trying to load font information for OMX+ztmcm on input line
- 35.
+ 37.
 
 (/usr/share/texmf-dist/tex/latex/psnfss/omxztmcm.fd
 File: omxztmcm.fd 2000/01/03 Fontinst v1.801 font definitions for OMX/ztmcm.
 )
 LaTeX Font Info:    Font shape `OT1/ptm/bx/n' in size <12> not available
-(Font)              Font shape `OT1/ptm/b/n' tried instead on input line 35.
+(Font)              Font shape `OT1/ptm/b/n' tried instead on input line 37.
 LaTeX Font Info:    Font shape `OT1/ptm/bx/n' in size <9> not available
-(Font)              Font shape `OT1/ptm/b/n' tried instead on input line 35.
+(Font)              Font shape `OT1/ptm/b/n' tried instead on input line 37.
 LaTeX Font Info:    Font shape `OT1/ptm/bx/n' in size <7> not available
-(Font)              Font shape `OT1/ptm/b/n' tried instead on input line 35.
+(Font)              Font shape `OT1/ptm/b/n' tried instead on input line 37.
  [1
 
 ] [1
@@ -833,25 +851,31 @@ LaTeX Font Info:    Font shape `OT1/ptm/bx/n' in size <7> not available
 
 ]
 (./monografia.lof
-Overfull \hbox (8.45706pt too wide) in paragraph at lines 3--3
+Overfull \hbox (8.45706pt too wide) in paragraph at lines 4--4
  [][] []\OT1/ptm/m/n/12 Arquitetura in-terna do Game Boy Ad-vance (\OT1/ptm/m/i
 t/12 die \OT1/ptm/m/n/12 CPU AGB): n[]ucleo ARM7TDMI, 
  []
 
 
-Overfull \hbox (21.40419pt too wide) in paragraph at lines 3--3
+Overfull \hbox (21.40419pt too wide) in paragraph at lines 4--4
  \OT1/ptm/m/n/12 co-processador Sharp SM83 (re-tro-com-pa-ti-bi-li-dade), as re
 gi[]oes de mem[]oria (WRAM 
  []
 
 
-Overfull \hbox (1.95367pt too wide) in paragraph at lines 5--5
+Overfull \hbox (64.14723pt too wide) in paragraph at lines 6--6
+ [][] []\OT1/ptm/m/n/12 Placa de de-sen-vol-vi-mento Te-ra-sic DE1-SoC, ba-se-a
+da na FPGA Cy-clone V [], 
+ []
+
+
+Overfull \hbox (1.95367pt too wide) in paragraph at lines 8--8
  \OT1/ptm/m/n/12 im-ple-men-tado e va-li-dado; o sub-sis-tema de mem[]oria (la-
 ranja), \OT1/cmtt/m/n/12 bus[]controller\OT1/ptm/m/n/12 , 
  []
 
 
-Overfull \hbox (12.62102pt too wide) in paragraph at lines 5--5
+Overfull \hbox (12.62102pt too wide) in paragraph at lines 8--8
  \OT1/ptm/m/n/12 regi[]oes in-ter-nas (BIOS, EWRAM, IWRAM, VRAM, I/O, Pa-lette,
  OAM), \OT1/cmtt/m/n/12 PAK[]RAM 
  []
@@ -862,18 +886,24 @@ Overfull \hbox (12.62102pt too wide) in paragraph at lines 5--5
 
  [4
 
-] [5
+] [5] [6
 
-] (./monografia.toc [6
+] (./monografia.toc [7
 
 ])
 \tf@toc=\write5
 \openout5 = `monografia.toc'.
 
- [7]
+ [8]
 Cap\'{\i }tulo 1.
+<imgs/Nintendo-Game-Boy-Advance-Purple-FL.jpg, id=41, 1264.725pt x 873.2625pt>
+File: imgs/Nintendo-Game-Boy-Advance-Purple-FL.jpg Graphic file (type jpg)
+<use imgs/Nintendo-Game-Boy-Advance-Purple-FL.jpg>
+Package pdftex.def Info: imgs/Nintendo-Game-Boy-Advance-Purple-FL.jpg  used on 
+input line 205.
+(pdftex.def)             Requested size: 250.38564pt x 172.87718pt.
 
-Overfull \hbox (5.34627pt too wide) in paragraph at lines 200--210
+Overfull \hbox (5.34627pt too wide) in paragraph at lines 212--222
 \OT1/ptm/m/n/12 endere[]amento seg-men-tado em m[]ultiplas regi[]oes com ca-rac
 -ter[]^^Psticas dis-tin-tas de lar-gura, lat[]encia
  []
@@ -881,55 +911,75 @@ Overfull \hbox (5.34627pt too wide) in paragraph at lines 200--210
 [1
 
 
-] [2] [3] [4] [5]
+ <./imgs/Nintendo-Game-Boy-Advance-Purple-FL.jpg>] [2] [3] [4] [5]
 Cap\'{\i }tulo 2.
 [6
 
 ]
-<cpu_diagram.png, id=58, 154.8987pt x 186.9384pt>
-File: cpu_diagram.png Graphic file (type png)
-<use cpu_diagram.png>
-Package pdftex.def Info: cpu_diagram.png  used on input line 464.
+<imgs/cpu_diagram.png, id=62, 154.8987pt x 186.9384pt>
+File: imgs/cpu_diagram.png Graphic file (type png)
+<use imgs/cpu_diagram.png>
+Package pdftex.def Info: imgs/cpu_diagram.png  used on input line 476.
 (pdftex.def)             Requested size: 273.14923pt x 329.69719pt.
-<gba_diagram.png, id=59, 1862.96pt x 1074.0125pt>
-File: gba_diagram.png Graphic file (type png)
-<use gba_diagram.png>
-Package pdftex.def Info: gba_diagram.png  used on input line 490.
+<imgs/gba_diagram.png, id=63, 1862.96pt x 1074.0125pt>
+File: imgs/gba_diagram.png Graphic file (type png)
+<use imgs/gba_diagram.png>
+Package pdftex.def Info: imgs/gba_diagram.png  used on input line 502.
 (pdftex.def)             Requested size: 432.48051pt x 249.3284pt.
- [7 <./cpu_diagram.png>]
-Overfull \hbox (9.42392pt too wide) in paragraph at lines 524--548
+ [7 <./imgs/cpu_diagram.png>]
+Overfull \hbox (9.42392pt too wide) in paragraph at lines 536--560
 []\OT1/ptm/m/n/12 A li-te-ra-tura t[]ecnica e a co-mu-ni-dade de \OT1/ptm/m/it/
 12 ho-me-brew \OT1/ptm/m/n/12 ofe-re-cem di-ver-sas re-fer[]encias de reprodu[]
 []ao
  []
 
-[8 <./gba_diagram.png>] [9] [10]
+[8 <./imgs/gba_diagram.png>]
+<imgs/analogue_pocket.jpg, id=71, 1505.625pt x 1096.84781pt>
+File: imgs/analogue_pocket.jpg Graphic file (type jpg)
+<use imgs/analogue_pocket.jpg>
+Package pdftex.def Info: imgs/analogue_pocket.jpg  used on input line 563.
+(pdftex.def)             Requested size: 273.14923pt x 198.98058pt.
+ [9 <./imgs/analogue_pocket.jpg>] [10]
 Cap\'{\i }tulo 3.
+<imgs/de1-soc.png, id=79, 483.30562pt x 304.88907pt>
+File: imgs/de1-soc.png Graphic file (type png)
+<use imgs/de1-soc.png>
+Package pdftex.def Info: imgs/de1-soc.png  used on input line 645.
+(pdftex.def)             Requested size: 318.66948pt x 201.03667pt.
+
+Underfull \hbox (badness 1199) in paragraph at lines 649--649
+[]\OT1/ptm/m/n/12 Figura 5: Placa de de-sen-vol-vi-mento Te-ra-sic DE1-SoC, ba-
+se-ada na FPGA Cy-clone V
+ []
+
 [11
 
-] [12]
-<rtl_atual.png, id=80, 2246.8743pt x 872.7807pt>
-File: rtl_atual.png Graphic file (type png)
-<use rtl_atual.png>
-Package pdftex.def Info: rtl_atual.png  used on input line 689.
+] [12 <./imgs/de1-soc.png>]
+<imgs/rtl_atual.png, id=88, 2246.8743pt x 872.7807pt>
+File: imgs/rtl_atual.png Graphic file (type png)
+<use imgs/rtl_atual.png>
+Package pdftex.def Info: imgs/rtl_atual.png  used on input line 721.
 (pdftex.def)             Requested size: 455.24411pt x 176.83034pt.
- [13 <./rtl_atual.png>] [14]
-Underfull \hbox (badness 8075) in paragraph at lines 819--824
+ [13 <./imgs/rtl_atual.png>] [14]
+Underfull \hbox (badness 8075) in paragraph at lines 852--857
 []\OT1/ptm/m/n/12 Implementa[][]ao RTL do n[]ucleo ARM7TDMI;
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 825--830
+Underfull \hbox (badness 10000) in paragraph at lines 858--863
 []\OT1/ptm/m/n/12 Subsistema de mem[]oria: \OT1/cmtt/m/n/12 bus[]controller\OT1
 /ptm/m/n/12 ,
  []
 
 
-Underfull \hbox (badness 4181) in paragraph at lines 825--830
+Underfull \hbox (badness 4181) in paragraph at lines 858--863
 \OT1/ptm/m/n/12 valida[][]ao fun-ci-o-nal do ca-mi-nho in-te-grado em
  []
 
-[15] [16] [17
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+(./monografia.bbl [15] [16]) [17
 
 
 ] (./monografia.aux)
@@ -939,11 +989,11 @@ L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 16912 strings out of 469495
- 330465 string characters out of 5470099
- 764155 words of memory out of 5000000
- 45243 multiletter control sequences out of 15000+600000
- 658476 words of font info for 97 fonts, out of 8000000 for 9000
+ 17309 strings out of 469495
+ 337839 string characters out of 5470099
+ 773449 words of memory out of 5000000
+ 45625 multiletter control sequences out of 15000+600000
+ 659490 words of font info for 99 fonts, out of 8000000 for 9000
  16 hyphenation exceptions out of 8191
  84i,14n,104p,969b,916s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/
@@ -951,10 +1001,10 @@ texmf-dist/fonts/type1/public/amsfonts/cm/cmtt12.pfb></usr/share/texmf-dist/fon
 ts/type1/public/amsfonts/cm/cmtt8.pfb></usr/share/texmf-dist/fonts/type1/urw/ti
 mes/utmb8a.pfb></usr/share/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/sh
 are/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on monografia.pdf (26 pages, 1318818 bytes).
+Output written on monografia.pdf (27 pages, 6229311 bytes).
 PDF statistics:
- 128 PDF objects out of 1000 (max. 8388607)
- 82 compressed objects within 1 object stream
+ 135 PDF objects out of 1000 (max. 8388607)
+ 84 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
- 28 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 43 words of extra memory for PDF output out of 10000 (max. 10000000)
 

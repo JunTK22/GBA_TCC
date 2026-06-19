@@ -1,0 +1,87 @@
+\providecommand{\abntreprintinfo}[1]{%
+ \citeonline{#1}}
+\begin{thebibliography}{}
+\providecommand{\abntrefinfo}[3]{}
+\providecommand{\abntbstabout}[1]{}
+\abntbstabout{v-1.9.7 }
+
+\bibitem{ARM_DDI0210B}
+\abntrefinfo{{ARM Limited}}{{ARM Limited}}{2004}
+{{ARM Limited}. \emph{ARM7TDMI Technical Reference Manual}.
+Cambridge, 2004. Documento DDI 0210B.}
+
+\bibitem{Copetti2019}
+\abntrefinfo{Copetti}{COPETTI}{2019}
+{COPETTI, R. \emph{Game Boy Advance Architecture: a Practical Analysis}. 2019.
+Dispon{\'\i}vel em:
+  \url{https://www.copetti.org/writings/consoles/game-boy-advance/}. Acesso em:
+  15 abr. 2026.}
+
+\bibitem{AnaloguePocket}
+\abntrefinfo{{Analogue Inc.}}{{Analogue Inc.}}{}
+{{Analogue Inc.} \emph{Analogue Pocket: Technical Specifications}.
+Dispon{\'\i}vel em: \url{https://www.analogue.co/pocket}. Acesso em: 15 abr.
+  2026.}
+
+\bibitem{TerasicDE1SoC}
+\abntrefinfo{{Terasic Inc.}}{{Terasic Inc.}}{2018}
+{{Terasic Inc.} \emph{DE1-SoC User Manual}.
+Hsinchu, 2018.}
+
+\bibitem{ARM_DVI0027B}
+\abntrefinfo{{ARM Limited}}{{ARM Limited}}{2001}
+{{ARM Limited}. \emph{ARM7TDMI (Rev 3) Core Processor Product Overview}.
+Cambridge, 2001. Documento DVI 0027B.}
+
+\bibitem{Vijn_Tonc}
+\abntrefinfo{Vijn}{VIJN}{}
+{VIJN, J. \emph{Tonc: GBA Programming in Rot13}.
+Dispon{\'\i}vel em: \url{https://gbadev.net/tonc/hardware.html}. Acesso em: 15
+  abr. 2026.}
+
+\bibitem{GBATEK}
+\abntrefinfo{Korth}{KORTH}{}
+{KORTH, M. \emph{GBATEK: GBA/NDS Technical Information}.
+Dispon{\'\i}vel em: \url{https://problemkaputt.de/gbatek.htm}. Acesso em: 15
+  abr. 2026.}
+
+\bibitem{PattersonHennessy}
+\abntrefinfo{Patterson e Hennessy}{PATTERSON; HENNESSY}{2020}
+{PATTERSON, D.~A.; HENNESSY, J.~L. \emph{Computer Organization and Design: the
+  Hardware/Software Interface}. 6. ed. Burlington: Morgan Kaufmann, 2020.}
+
+\bibitem{HarrisHarris}
+\abntrefinfo{Harris e Harris}{HARRIS; HARRIS}{2015}
+{HARRIS, D.~M.; HARRIS, S.~L. \emph{Digital Design and Computer Architecture:
+  ARM Edition}. Burlington: Morgan Kaufmann, 2015.}
+
+\bibitem{MiSTer}
+\abntrefinfo{{MiSTer FPGA Project}}{{MiSTer FPGA Project}}{}
+{{MiSTer FPGA Project}. \emph{MiSTer FPGA: Open-Source Hardware Reproduction of
+  Classic Consoles}.
+Dispon{\'\i}vel em: \url{https://github.com/MiSTer-devel/Main\_MiSTer/wiki}.
+  Acesso em: 15 abr. 2026.}
+
+\bibitem{NanoBoyAdvance}
+\abntrefinfo{Schibli}{SCHIBLI}{}
+{SCHIBLI, F. \emph{NanoBoyAdvance: a Cycle-Accurate Game Boy Advance Emulator}.
+Dispon{\'\i}vel em: \url{https://github.com/nba-emu/NanoBoyAdvance}. Acesso em:
+  15 abr. 2026.}
+
+\bibitem{CycloneV}
+\abntrefinfo{{Intel Corporation}}{{Intel Corporation}}{2018}
+{{Intel Corporation}. \emph{Cyclone V Device Handbook}.
+San Jose, 2018.}
+
+\bibitem{Trimberger2015}
+\abntrefinfo{Trimberger}{TRIMBERGER}{2015}
+{TRIMBERGER, S.~M. Three ages of {FPGAs}: a retrospective on the first thirty
+  years of {FPGA} technology.
+\emph{Proceedings of the IEEE}, v.~103, n.~3, p. 318--331, 2015.}
+
+\bibitem{mGBA}
+\abntrefinfo{{endrift}}{{endrift}}{}
+{{endrift}. \emph{mGBA: a Game Boy Advance Emulator}.
+Dispon{\'\i}vel em: \url{https://mgba.io/}. Acesso em: 15 abr. 2026.}
+
+\end{thebibliography}

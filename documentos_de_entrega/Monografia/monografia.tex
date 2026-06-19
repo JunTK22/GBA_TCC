@@ -3,12 +3,14 @@
 % ========== Packages ==========
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath,amsthm,amsfonts,amssymb}
-\usepackage{graphicx,cite,enumerate}
+\usepackage{graphicx,enumerate}
+\graphicspath{{imgs/}}
 \usepackage[brazil]{babel}
 \usepackage{url}
 \usepackage{booktabs}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,calc}
+\usepackage[num]{abntex2cite}   % referências no padrão ABNT (NBR 6023), sistema numérico
 
 % ========== Opções do documento ==========
 \titulo{Reprodução da Arquitetura do Game Boy Advance em FPGA}
@@ -195,7 +197,17 @@ embarcados da primeira metade da década de 2000~\cite{ARM_DDI0210B,
 ARM_DVI0027B}. Em complemento, o console preserva um co-processador
 Sharp~LR35902 (compatível com o Game Boy Color) para retrocompatibilidade
 com a biblioteca anterior, bem como blocos dedicados a vídeo, áudio e
-acesso direto à memória~\cite{Copetti2019,Vijn_Tonc}.
+acesso direto à memória~\cite{Copetti2019,Vijn_Tonc}. A
+Figura~\ref{fig:gba-console} apresenta o aparelho em sua forma original.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.55\textwidth]{Nintendo-Game-Boy-Advance-Purple-FL.jpg}
+    \caption{Console Game Boy Advance (modelo AGB-001), lançado pela Nintendo
+        em 2001.
+        Fonte: Wikimedia Commons (domínio público).}
+    \label{fig:gba-console}
+\end{figure}
 
 A arquitetura do GBA combina, portanto, um processador de uso geral,
 um espaço de endereçamento segmentado em múltiplas regiões com
@@ -532,9 +544,9 @@ frequente para implementadores em hardware. No campo do hardware
 reconfigurável, o núcleo GBA do projeto MiSTer FPGA~\cite{MiSTer}
 persegue a alta fidelidade e a execução ciclo-perfeita sobre uma
 Cyclone~V do tipo DE10-Nano, ao passo que o Analogue
-Pocket~\cite{AnaloguePocket}, produto comercial baseado em FPGA,
-reproduz Game Boy, Game Boy Color e Game Boy Advance e demonstra a
-viabilidade industrial da abordagem. Dão suporte a todas essas
+Pocket~\cite{AnaloguePocket} (Figura~\ref{fig:pocket}), produto comercial
+baseado em FPGA, reproduz Game Boy, Game Boy Color e Game Boy Advance e
+demonstra a viabilidade industrial da abordagem. Dão suporte a todas essas
 iniciativas a documentação de comunidade consolidada na engenharia
 reversa do hardware, com destaque para o GBATEK~\cite{GBATEK} e o
 Tonc~\cite{Vijn_Tonc}, referência \textit{de facto} para qualquer
@@ -545,6 +557,16 @@ normalmente restritos a subconjuntos do ISA; a combinação de um
 ARM7TDMI completo com o subsistema gráfico do GBA permanece, contudo,
 um nicho explorado majoritariamente pela comunidade de
 \textit{retrocomputing}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.6\textwidth]{analogue_pocket.jpg}
+    \caption{Analogue Pocket, console portátil comercial baseado em FPGA que
+        reproduz Game Boy, Game Boy Color e Game Boy Advance a partir de
+        cartuchos originais.
+        Fonte: Analogue Inc.~\cite{AnaloguePocket}.}
+    \label{fig:pocket}
+\end{figure}
 
 
 \section{Tendências}
@@ -600,8 +622,8 @@ para a entrega final.
 \label{sec:plataforma}
 
 A implementação é realizada na placa Altera DE1-SoC, da
-Terasic~\cite{TerasicDE1SoC}, que abriga uma FPGA Cyclone~V
-(\mbox{5CSEMA5F31C6}~\cite{CycloneV}). Entre os recursos da placa
+Terasic~\cite{TerasicDE1SoC} (Figura~\ref{fig:de1soc}), que abriga uma FPGA
+Cyclone~V (\mbox{5CSEMA5F31C6}~\cite{CycloneV}). Entre os recursos da placa
 relevantes ao projeto, destacam-se os 64~MiB de SDRAM externa de
 16~bits, destinada exclusivamente a abrigar a ROM de cartucho
 (\texttt{PAK\_ROM}), região que, na fase final do projeto, poderá
@@ -617,6 +639,16 @@ na injeção de estímulos, por exemplo, \texttt{KEY[0]} como
 interna deriva a frequência inicial de operação do núcleo, com divisão
 programável que permite reduzi-la a níveis convenientes para a
 depuração visual.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{de1-soc.png}
+    \caption{Placa de desenvolvimento Terasic DE1-SoC, baseada na FPGA
+        Cyclone~V \mbox{5CSEMA5F31C6}, utilizada como plataforma de
+        implementação e depuração do projeto.
+        Fonte: Terasic~\cite{TerasicDE1SoC}.}
+    \label{fig:de1soc}
+\end{figure}
 
 
 \section{Fluxo de Projeto e Ferramentas}
@@ -800,9 +832,10 @@ caminho integrado. O projeto encontra-se, neste momento, na fase F3;
 as fases F4 a F6 descrevem, portanto, a continuidade prevista até a
 entrega final. O cronograma detalhado, com desdobramento semanal e
 marcos intermediários, constitui entrega complementar e está
-localizado em \texttt{documentos\_de\_entrega/Cronograma/}.
-% [INDICAR: o cronograma detalhado ainda será produzido como entrega à
-%  parte. Atualizar a referência acima com o nome do arquivo final.]
+localizado em
+\texttt{documentos\_de\_entrega/Cronograma/cronograma\_detalhado.xlsx},
+acompanhado das versões editáveis em \texttt{.csv} e \texttt{.md} na
+mesma pasta.
 
 \begin{table}[h]
     \centering
@@ -961,105 +994,10 @@ localizado em \texttt{documentos\_de\_entrega/Cronograma/}.
 %  complemento ao diagrama de blocos da Figura~\ref{fig:arquitetura}.]
 
 
-% ========== Referências ==========
-% [INDICAR: caso a entrega final exija o estilo ABNT puro,
-%  migrar este bloco para um arquivo .bib e ativar
-%  \usepackage[num]{abntex2cite} +
-%  \bibliographystyle{abntex2-num} +
-%  \bibliography{...}. Por ora, mantemos o ambiente
-%  \texttt{thebibliography} para garantir compilação
-%  independente de pacotes externos.]
-\begin{thebibliography}{99}
-
-\bibitem{ARM_DDI0210B}
-ARM LIMITED.
-\textbf{ARM7TDMI Technical Reference Manual}.
-Cambridge: ARM Limited, 2004.
-Documento DDI~0210B.
-
-\bibitem{ARM_DVI0027B}
-ARM LIMITED.
-\textbf{ARM7TDMI (Rev~3) Core Processor Product Overview}.
-Cambridge: ARM Limited, 2001.
-Documento DVI~0027B.
-
-\bibitem{Copetti2019}
-COPETTI, R.
-\textbf{Game Boy Advance Architecture: a Practical Analysis}.
-2019.
-Disponível em:
-\url{https://www.copetti.org/writings/consoles/game-boy-advance/}.
-Acesso em: 15 abr.\ 2026.
-
-\bibitem{Vijn_Tonc}
-VIJN, J.
-\textbf{Tonc, GBA Programming in Rot13}.
-Disponível em: \url{https://gbadev.net/tonc/hardware.html}.
-Acesso em: 15 abr.\ 2026.
-
-\bibitem{GBATEK}
-KORTH, M.
-\textbf{GBATEK, GBA/NDS Technical Information}.
-Disponível em: \url{https://problemkaputt.de/gbatek.htm}.
-Acesso em: 15 abr.\ 2026.
-
-\bibitem{PattersonHennessy}
-PATTERSON, D.~A.; HENNESSY, J.~L.
-\textbf{Computer Organization and Design: The Hardware/Software
-Interface}.
-6.~ed.\ Burlington: Morgan Kaufmann, 2020.
-
-\bibitem{HarrisHarris}
-HARRIS, D.~M.; HARRIS, S.~L.
-\textbf{Digital Design and Computer Architecture, ARM Edition}.
-Burlington: Morgan Kaufmann, 2015.
-
-\bibitem{Trimberger2015}
-TRIMBERGER, S.~M.
-Three Ages of FPGAs: A Retrospective on the First Thirty Years
-of FPGA Technology.
-\textbf{Proceedings of the IEEE},
-v.~103, n.~3, p.~318--331, 2015.
-
-\bibitem{CycloneV}
-INTEL CORPORATION (ALTERA).
-\textbf{Cyclone V Device Handbook}.
-San Jose: Intel Corporation, 2018.
-
-\bibitem{TerasicDE1SoC}
-TERASIC INC.
-\textbf{DE1-SoC User Manual}.
-Hsinchu: Terasic Inc., 2018.
-
-\bibitem{MiSTer}
-MiSTer FPGA PROJECT.
-\textbf{MiSTer FPGA Project, Open-Source Hardware Reproduction
-of Classic Consoles}.
-Disponível em:
-\url{https://github.com/MiSTer-devel/Main_MiSTer/wiki}.
-Acesso em: 15 abr.\ 2026.
-
-\bibitem{AnaloguePocket}
-ANALOGUE INC.
-\textbf{Analogue Pocket: Technical Specifications}.
-Disponível em: \url{https://www.analogue.co/pocket}.
-Acesso em: 15 abr.\ 2026.
-
-\bibitem{NanoBoyAdvance}
-SCHIBLI, F.
-\textbf{NanoBoyAdvance: a Cycle-Accurate Game Boy Advance
-Emulator}.
-Disponível em:
-\url{https://github.com/nba-emu/NanoBoyAdvance}.
-Acesso em: 15 abr.\ 2026.
-
-\bibitem{mGBA}
-ENDRIFT.
-\textbf{mGBA: a Game Boy Advance Emulator}.
-Disponível em: \url{https://mgba.io/}.
-Acesso em: 15 abr.\ 2026.
-
-\end{thebibliography}
+% ========== Referências (ABNT NBR 6023, via abntex2cite) ==========
+% Entradas mantidas em referencias.bib; estilo numérico (abntex2-num)
+% é carregado pela opção [num] de abntex2cite no preâmbulo.
+\bibliography{referencias}
 
 
 % ========== Apêndices (opcional) ==========
