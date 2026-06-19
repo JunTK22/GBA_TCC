@@ -269,12 +269,16 @@ always @(posedge CLK) begin
 	Data_o	<= Data_i;
 end
 
+wire [3:0] mem_section = Data_i[27:24];
+wire section_32b = mem_section == 4'h0 || mem_section == 4'h1 || mem_section == 4'h3 || mem_section == 4'h7;
+
 always @(posedge CLK or negedge nrst) begin // Fetch Register
 	// Instruction hE1A00000 -> MOV R0, R0 (NOP)
 	if (~nrst) begin
 		instruct_reg <= 32'hE1A00000;
 	end else begin
-		instruct_reg <= pipeline_halt_r ? instruct_reg : (thumb_state ? (addr_odd ? Data_i[31:16] : Data_i[15:0]) : Data_i);
+		if (pipeline_halt_r) instruct_reg <= instruct_reg;
+		else instruct_reg <= section_32b ? (thumb_state ? (addr_odd ? Data_i[31:16] : Data_i[15:0]) : Data_i) : Data_i;
 	end
 end
 

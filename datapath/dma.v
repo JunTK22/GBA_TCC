@@ -14,7 +14,7 @@ module dma #(
     output reg          wr_en = 0,
     output reg  [1:0]   MAS = 2'b10,
     output reg          dma_active = 0,
-    output reg          IRQ = 0
+    output reg          nIRQ = 1
 );
 
 localparam IDLE     = 3'd0;
@@ -82,7 +82,7 @@ always @(posedge clock) begin
                 wr_en <= 0;
                 MAS <= 2'b10;
                 dma_active <= 0;
-                IRQ <= 0;
+                nIRQ <= 1;
             end
             DMA_SET: begin
                 src_addr <= dmasad_o;
@@ -103,7 +103,7 @@ always @(posedge clock) begin
                     2'b00: src_addr <= ctrl_type ? src_addr + 32'd4 : src_addr + 32'd2; 
                     2'b01: src_addr <= ctrl_type ? src_addr - 32'd4 : src_addr - 32'd2; 
                     2'b10: src_addr <= src_addr; 
-                    2'b11: src_addr <= ctrl_type ? src_addr + 32'd4 : src_addr + 32'd2; 
+                    2'b11: src_addr <= ctrl_type ? src_addr + 32'd4 : src_addr + 32'd2; // is illegal
                 endcase
 
                 data_o <= ctrl_type ? data_i : {16'b0, data_i[15:0]};
@@ -115,6 +115,7 @@ always @(posedge clock) begin
                     2'b00: dst_addr <= ctrl_type ? dst_addr + 32'd4 : dst_addr + 32'd2; 
                     2'b01: dst_addr <= ctrl_type ? dst_addr - 32'd4 : dst_addr - 32'd2; 
                     2'b10: dst_addr <= dst_addr; 
+                    2'b11: dst_addr <= ctrl_type ? dst_addr + 32'd4 : dst_addr + 32'd2; 
                     default:;
                 endcase
                 wr_en <= 0;
@@ -124,7 +125,7 @@ always @(posedge clock) begin
                 data_o <= {17'b0,dmacnt_h_o[14:0]};
                 wr_en <= ctrl_timing == 2'b0 ? 1'b1 : !ctrl_repeat;
                 MAS   <= 2'b01;
-                IRQ   <= ctrl_irq;
+                nIRQ   <= !ctrl_irq;
             end
         endcase
     end

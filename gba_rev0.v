@@ -74,7 +74,10 @@ module gba_rev0(
 //parameter INIT_FILE  = "code/assembly_code/arm7tdmi_thumb_test.mif";
 //parameter INIT_FILE  = "code/assembly_code/interrupt_test.mif";
 //parameter INIT_FILE  = "code/assembly_code/bus_test.mif";
-parameter INIT_FILE  = "code/assembly_code/presentation_fibonacci.mif";
+//parameter INIT_FILE  = "code/assembly_code/presentation_fibonacci.mif";
+//parameter INIT_FILE  = "code/assembly_code/memory_system_test.mif";
+//parameter INIT_FILE  = "code/assembly_code/dma_modes_test.mif";
+parameter INIT_FILE  = "code/assembly_code/dma_irq_memory_test.mif";
 
 //=======================================================
 //  REG/WIRE declarations
@@ -101,6 +104,9 @@ wire [31:0] din;
 wire [31:0] addr_bus;
 wire [31:0] addr_cpu;
 wire [31:0] addr_src_dma0, addr_dst_dma0;
+wire [31:0] addr_src_dma1, addr_dst_dma1;
+wire [31:0] addr_src_dma2, addr_dst_dma2;
+wire [31:0] addr_src_dma3, addr_dst_dma3;
 
 wire [31:0] CPSR;
 
@@ -108,7 +114,6 @@ wire nRW;
 wire nRW_CPU;
 wire [1:0] MAS;
 wire [1:0] MAS_cpu;
-wire [1:0] MAS_dma0;
 wire MAS_16 = MAS[1] || MAS[0];
 
 wire sign_extend;
@@ -126,6 +131,11 @@ wire [31:0] data_cartram;
 wire [31:0] data_main;
 wire [31:0] data_cpu;
 wire [31:0] data_dma0;
+wire [31:0] data_dma1;
+wire [31:0] data_dma2;
+wire [31:0] data_dma3;
+
+wire [31:0] data_sdram;
 
 wire        rden_bios;
 wire        rden_ewram;
@@ -145,16 +155,72 @@ wire		we_oam;
 wire		we_pakrom; // Used to load Game ROM
 wire		we_cartram;
 
-wire        wr_en_dma0;
+// DMA control registers (io_registers -> dma)
+wire [3:0]  dma_active;
 
-// DMA0 control registers (io_registers -> dma)
 wire [31:0]	dma0sad_o;
 wire [31:0]	dma0dad_o;
 wire [15:0]	dma0cnt_l_o;
 wire [15:0]	dma0cnt_h_o;
+wire        wr_en_dma0;
+wire		nirq_dma0;
 
-wire [3:0]  dma_active;
-assign dma_active[3:1] = 3'b0;
+wire [31:0]	dma1sad_o;
+wire [31:0]	dma1dad_o;
+wire [15:0]	dma1cnt_l_o;
+wire [15:0]	dma1cnt_h_o;
+wire        wr_en_dma1;
+wire		nirq_dma1;
+
+wire [31:0]	dma2sad_o;
+wire [31:0]	dma2dad_o;
+wire [15:0]	dma2cnt_l_o;
+wire [15:0]	dma2cnt_h_o;
+wire        wr_en_dma2;
+wire		nirq_dma2;
+
+wire [31:0]	dma3sad_o;
+wire [31:0]	dma3dad_o;
+wire [15:0]	dma3cnt_l_o;
+wire [15:0]	dma3cnt_h_o;
+wire        wr_en_dma3;
+wire		nirq_dma3;
+
+wire [1:0] MAS_dma0;
+wire [1:0] MAS_dma1;
+wire [1:0] MAS_dma2;
+wire [1:0] MAS_dma3;
+
+// DMA completion pulses are latched by IF. The CPU sees an active-low IRQ only
+// when the corresponding IE bit and IME are enabled; KEY[1] remains a direct,
+// active-low external IRQ source.
+wire [15:0] ie_reg;
+wire [15:0] if_reg;
+wire [15:0] ime_reg;
+wire [13:0] irq_request = {2'b00, ~nirq_dma3, ~nirq_dma2,
+                            ~nirq_dma1, ~nirq_dma0, 8'b0};
+wire        irq_pending = ime_reg[0] && |(ie_reg & if_reg);
+wire        nIRQ = KEY[1] && !irq_pending;
+
+wire vblank_i = SW[1];
+wire hblank_i = SW[2];
+
+reg vblank_s0, vblank_s1, vblank_s2;
+reg hblank_s0, hblank_s1, hblank_s2;
+
+wire vblank = !vblank_s2 && vblank_s1;
+wire hblank = !hblank_s2 && hblank_s1;
+
+always @(posedge clock) begin
+    vblank_s0 <= vblank_i;
+    hblank_s0 <= hblank_i;
+    vblank_s1 <= vblank_s0;
+    hblank_s1 <= hblank_s0;
+    vblank_s2 <= vblank_s1;
+    hblank_s2 <= hblank_s1;
+end
+
+///////////////////////////////////////
 
 wire busy;
 reg nWAIT = 0;
@@ -185,7 +251,7 @@ arm7tdmi_top arm7tdmi_top(
 
 	.sign_f	(sign_extend),
 
-	.nIRQ	(KEY[1]),
+	.nIRQ	(nIRQ),
 	.nFIQ	(KEY[2]),
 	.ABORT	(KEY[3]),
 
@@ -251,24 +317,24 @@ bus_controller bus_controller(
 bus_arbiter bus_arbiter (
     .addr_cpu      (addr_cpu),
     .addr_src_dma0 (addr_src_dma0), .addr_dst_dma0 (addr_dst_dma0),
-    .addr_src_dma1 (), .addr_dst_dma1 (),
-    .addr_src_dma2 (), .addr_dst_dma2 (),
-    .addr_src_dma3 (), .addr_dst_dma3 (),
+    .addr_src_dma1 (addr_src_dma1), .addr_dst_dma1 (addr_dst_dma1),
+    .addr_src_dma2 (addr_src_dma2), .addr_dst_dma2 (addr_dst_dma2),
+    .addr_src_dma3 (addr_src_dma3), .addr_dst_dma3 (addr_dst_dma3),
 
     .data_cpu      (data_cpu),
     .data_dma0     (data_dma0),
-    .data_dma1     (),
-    .data_dma2     (),
-    .data_dma3     (),
+    .data_dma1     (data_dma1),
+    .data_dma2     (data_dma2),
+    .data_dma3     (data_dma3),
 
     .MAS_cpu       (MAS_cpu),
     .MAS_dma0      (MAS_dma0),
-    .MAS_dma1      (),
-    .MAS_dma2      (),
-    .MAS_dma3      (),
+    .MAS_dma1      (MAS_dma1),
+    .MAS_dma2      (MAS_dma2),
+    .MAS_dma3      (MAS_dma3),
 
     .nRW_CPU       (nRW_CPU),
-    .wr_en_dma     (wr_en_dma0),
+    .wr_en_dma     (wr_en_dma0 || wr_en_dma1 || wr_en_dma2 || wr_en_dma3),
     .dma_active    (dma_active),
 
     .addr_o        (addr_bus),
@@ -282,12 +348,12 @@ sdram_controller_top sdram_controller(
     .clock_sdram(clock_sdram),
     .nrst       (nrst),
 
-    .rd_en      (rden_pakrom),
-    .wr_en      (we_pakrom),
+    .rd_en      (rden_pakrom  || rden_ewram),
+    .wr_en      (we_pakrom || we_ewram),
 	
     .addr       (addr_bus),
     .wr_data    (data_bus),
-    .rd_data    (data_pakrom),
+    .rd_data    (data_sdram),
     .busy       (busy),
     
     .SA         (DRAM_ADDR),
@@ -302,6 +368,8 @@ sdram_controller_top sdram_controller(
 );
 
 assign DRAM_CLK = clock_sdram_d;
+assign data_pakrom = data_sdram;
+assign data_ewram = data_sdram;
 
 bios #(
     .INIT_FILE (INIT_FILE)
@@ -312,18 +380,18 @@ bios #(
     .rden	(rden_bios)
 );
 
-ewram ewram (
-    .clk	(clock_n),
-    .addr	(addr_bus),           // 256 KB byte address
-    .wdata	(data_bus),
-    .rdata	(data_ewram),
-    .we		(we_ewram),
-    .rden	(rden_ewram),
-    .size	(MAS_16),           // 0=byte, 1=halfword
-    .sign_extend (sign_extend),
-    .ready	(),
-    .misalign_fault	()
-);
+//ewram ewram (
+//    .clk	(clock_n),
+//    .addr	(addr_bus),           // 256 KB byte address
+//    .wdata	(data_bus),
+//    .rdata	(data_ewram),
+//    .we		(we_ewram),
+//    .rden	(rden_ewram),
+//    .size	(MAS_16),           // 0=byte, 1=halfword
+//    .sign_extend (sign_extend),
+//    .ready	(),
+//    .misalign_fault	()
+//);
 
 iwram iwram (
     .clk	(clock_n),
@@ -405,7 +473,7 @@ io_registers io_registers (
     .hblank_status_i (1'b0),   // DISPSTAT bit 1 (G)
     .vcount_match_i  (1'b0),   // DISPSTAT bit 2 (Z)
     .keypad_i	(16'h03FF),    // REG_KEY (active low) — all keys released
-    .irq_request_i (14'd0),    // pulses set the IF bits
+    .irq_request_i (irq_request),
     .sound_status_i (4'd0),    // SOUNDCNT_X bits 0-3
     .serial_data0_i (16'd0),   // SCD0 (received)
     .serial_data1_i (16'd0),   // SCD1
@@ -441,14 +509,22 @@ io_registers io_registers (
     //---------------- Sound (master only — channel regs read via CPU) ----------------
     .soundcnt_l_o (), .soundcnt_h_o (), .soundcnt_x_o (), .soundbias_o (),
     //---------------- DMA ----------------
-    .dma0sad_o (dma0sad_o), .dma0dad_o (dma0dad_o),
-    .dma0cnt_l_o (dma0cnt_l_o), .dma0cnt_h_o (dma0cnt_h_o),
-    .dma1sad_o (), .dma1dad_o (),
-    .dma1cnt_l_o (), .dma1cnt_h_o (),
-    .dma2sad_o (), .dma2dad_o (),
-    .dma2cnt_l_o (), .dma2cnt_h_o (),
-    .dma3sad_o (), .dma3dad_o (),
-    .dma3cnt_l_o (), .dma3cnt_h_o (),
+    .dma0sad_o      (dma0sad_o),
+    .dma0dad_o      (dma0dad_o),
+    .dma0cnt_l_o    (dma0cnt_l_o),
+    .dma0cnt_h_o    (dma0cnt_h_o),
+    .dma1sad_o      (dma1sad_o),
+    .dma1dad_o      (dma1dad_o),
+    .dma1cnt_l_o    (dma1cnt_l_o),
+    .dma1cnt_h_o    (dma1cnt_h_o),
+    .dma2sad_o      (dma2sad_o),
+    .dma2dad_o      (dma2dad_o),
+    .dma2cnt_l_o    (dma2cnt_l_o),
+    .dma2cnt_h_o    (dma2cnt_h_o),
+    .dma3sad_o      (dma3sad_o),
+    .dma3dad_o      (dma3dad_o),
+    .dma3cnt_l_o    (dma3cnt_l_o),
+    .dma3cnt_h_o    (dma3cnt_h_o),
     //---------------- Timers ----------------
     .tm0d_o (), .tm0cnt_o (),
     .tm1d_o (), .tm1cnt_o (),
@@ -465,22 +541,23 @@ io_registers io_registers (
     .joytr_o	(),
     .jstat_o	(),
     //---------------- Interrupts ----------------
-    .ie_o		(),
-    .if_o		(),
+    .ie_o		(ie_reg),
+    .if_o		(if_reg),
     .wscnt_o	(),
-    .ime_o		()
+    .ime_o		(ime_reg)
 );
 
-// DMA0 channel. Single instance for now (default param targets DMA0 at 0x040000BA)
-dma dma0 (
+// DMA0: 0x040000BA | DMA1: 0x040000C6 | DMA2: 0x040000D2 | DMA3: 0x040000DE
+// DMA0 channel
+dma #(.DMA_Control_Register_Addr (32'h0400_00BA)) dma0 (
     .clock		(clock),
     .dmasad_o	(dma0sad_o),
     .dmadad_o	(dma0dad_o),
     .dmacnt_l_o (dma0cnt_l_o),
     .dmacnt_h_o (dma0cnt_h_o),
-    .data_i	    (data_bus),        // no DMA read path / bus arbiter yet
-    .vblank		(1'b0),         // no PPU timing wired yet
-    .hblank		(1'b0),
+    .data_i	    (data_bus),
+    .vblank		(vblank),            // no PPU timing wired yet
+    .hblank		(hblank),
     .halt       (busy),
     .src_addr	(addr_src_dma0),
     .dst_addr	(addr_dst_dma0),
@@ -488,12 +565,73 @@ dma dma0 (
     .wr_en		(wr_en_dma0),
     .MAS		(MAS_dma0),
     .dma_active	(dma_active[0]),
-    .IRQ		()
+    .nIRQ		(nirq_dma0)
 );
 
+// DMA1 channel
+dma #(.DMA_Control_Register_Addr (32'h0400_00C6)) dma1 (
+    .clock		(clock),
+    .dmasad_o	(dma1sad_o),
+    .dmadad_o	(dma1dad_o),
+    .dmacnt_l_o (dma1cnt_l_o),
+    .dmacnt_h_o (dma1cnt_h_o),
+    .data_i	    (data_bus),
+    .vblank		(vblank),            // no PPU timing wired yet
+    .hblank		(hblank),
+    .halt       (busy),
+    .src_addr	(addr_src_dma1),
+    .dst_addr	(addr_dst_dma1),
+    .data_o 	(data_dma1),
+    .wr_en		(wr_en_dma1),
+    .MAS		(MAS_dma1),
+    .dma_active	(dma_active[1]),
+    .nIRQ		(nirq_dma1)
+);
+
+// DMA2 channel
+dma #(.DMA_Control_Register_Addr (32'h0400_00D2)) dma2 (
+    .clock		(clock),
+    .dmasad_o	(dma2sad_o),
+    .dmadad_o	(dma2dad_o),
+    .dmacnt_l_o (dma2cnt_l_o),
+    .dmacnt_h_o (dma2cnt_h_o),
+    .data_i	    (data_bus),
+    .vblank		(vblank),            // no PPU timing wired yet
+    .hblank		(hblank),
+    .halt       (busy),
+    .src_addr	(addr_src_dma2),
+    .dst_addr	(addr_dst_dma2),
+    .data_o 	(data_dma2),
+    .wr_en		(wr_en_dma2),
+    .MAS		(MAS_dma2),
+    .dma_active	(dma_active[2]),
+    .nIRQ		(nirq_dma2)
+);
+
+// DMA3 channel
+dma #(.DMA_Control_Register_Addr (32'h0400_00DE)) dma3 (
+    .clock		(clock),
+    .dmasad_o	(dma3sad_o),
+    .dmadad_o	(dma3dad_o),
+    .dmacnt_l_o (dma3cnt_l_o),
+    .dmacnt_h_o (dma3cnt_h_o),
+    .data_i	    (data_bus),
+    .vblank		(vblank),            // no PPU timing wired yet
+    .hblank		(hblank),
+    .halt       (busy),
+    .src_addr	(addr_src_dma3),
+    .dst_addr	(addr_dst_dma3),
+    .data_o 	(data_dma3),
+    .wr_en		(wr_en_dma3),
+    .MAS		(MAS_dma3),
+    .dma_active	(dma_active[3]),
+    .nIRQ		(nirq_dma3)
+);
+
+// {r[7][3:0],addr_bus[7:0], r[0][11:0]}
 // {r[0][7:0], addr_bus[27:24], addr_bus[15:0]}
 seg_display seg_display(
-    .in({r[7][3:0],addr_bus[7:0], r[0][11:0]}),
+    .in({r[0][7:0], addr_bus[27:24], addr_bus[11:0]}),
 	.clk (clock),
 
     .s0(HEX0),
