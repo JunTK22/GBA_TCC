@@ -34,8 +34,7 @@ module bus_controller(
 	output reg	 		we_cartram	 = 0
 );
 
-wire [3:0] mem_section;
-assign mem_section = rd_addr[27:24];
+wire [3:0] mem_section = rd_addr[27:24];
 
 always @(*) begin
 	we_ewram	= 0;

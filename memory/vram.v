@@ -28,25 +28,25 @@ module vram (
     output wire        misalign_fault
 );
 
-wire [16:0] addr_w = addr[16] ? {2'b10, addr[14:0]} : addr;
-wire [15:0] rdata_mem;
+    wire [16:0] addr_w = addr[16] ? {2'b10, addr[14:0]} : addr;
+    wire [15:0] rdata_mem;
 
-gba_ram_w16 #(
-    .DEPTH_POW2 (15),               // 2^16 = 65536 halfwords = 128 KB
-    .INIT_FILE  ("UNUSED")
-) vram_mem (
-    .clk            (clk),
-    .addr           (addr_w),
-    .wdata          (wdata),
-    .rdata          (rdata_mem),
-    .we             (we),
-    .rden           (rden),
-    .size           (size),
-    .sign_extend    (sign_extend),
-    .ready          (ready),
-    .misalign_fault (misalign_fault)
-);
+    gba_ram_w16 #(
+        .DEPTH_POW2 (16),               // 2^16 = 65536 halfwords = 128 KB
+        .INIT_FILE  ("UNUSED")
+    ) vram_mem (
+        .clk            (clk),
+        .addr           (addr_w),
+        .wdata          (wdata),
+        .rdata          (rdata_mem),
+        .we             (we),
+        .rden           (rden),
+        .size           (size),
+        .sign_extend    (sign_extend),
+        .ready          (ready),
+        .misalign_fault (misalign_fault)
+    );
 
-assign rdata = {16'b0,rdata_mem};
+    assign rdata = {{16{sign_extend ? rdata_mem[15] : 1'b0}},rdata_mem};
 
 endmodule

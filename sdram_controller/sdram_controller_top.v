@@ -31,9 +31,9 @@ module sdram_controller_top (
     input   wire        rd_en,
     input   wire        wr_en,
 
-	input   wire [24:0] addr,
+	input   wire [27:0] addr,
     input   wire [15:0] wr_data,
-    output  wire [15:0] rd_data,
+    output  wire [31:0] rd_data,
     output  wire        busy,
 
     output  wire [12:0] SA,
@@ -47,11 +47,13 @@ module sdram_controller_top (
     output  wire [1:0]  DQM
 );
 
+wire is_ewram = addr[27:24] == 4'h2;
+
 reg [24:0] addr_r = 0;
 reg [15:0] wr_data_r = 0;
 
 always @(posedge clock) begin
-    if (wr_en || rd_en) addr_r <= addr;
+    if (wr_en || rd_en) addr_r <= is_ewram ? {8'b0,addr[17:1]} : {1'b1,addr[24:1]};
     if (wr_en) wr_data_r <= wr_data;
 end
 
@@ -72,7 +74,7 @@ always @(posedge clock_sdram) begin
     if (rd_ready_pulse) rd_data_r2 <= rd_data_r0;
 end
 
-assign rd_data = rd_data_r2;
+assign rd_data = {16'b0,rd_data_r2};
 
 // Write/Read request-hold
 

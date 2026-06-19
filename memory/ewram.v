@@ -41,6 +41,6 @@ module ewram (
         .misalign_fault (misalign_fault)
     );
 
-    assign rdata = {16'b0,rdata_mem};
+    assign rdata = {{16{sign_extend ? rdata_mem[15] : 1'b0}},rdata_mem};
 
 endmodule

@@ -58,8 +58,8 @@ set_clock_groups -asynchronous \
 set_false_path -from [get_pins {pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|lock}] -to [all_registers]
 set_false_path -from [get_ports {SW[*]}]       -to [all_registers]
 set_false_path -from [get_ports {KEY[*]}]      -to [all_registers]
-set_false_path -from [get_registers {dma:dma0|data_o[*]}]      -to [get_registers {arm7tdmi_top:arm7tdmi_top|*}]
-set_false_path -from [get_registers {arm7tdmi_top:arm7tdmi_top|*}]      -to [get_registers {dma:dma0|data_o[*]}]
+#set_false_path -from [get_registers {dma:dma0|data_o[*]}]      -to [get_registers {arm7tdmi_top:arm7tdmi_top|*}]
+#set_false_path -from [get_registers {arm7tdmi_top:arm7tdmi_top|*}]      -to [get_registers {dma:dma0|data_o[*]}]
 
 #**************************************************************
 # Set Clock Latency
