@@ -75,9 +75,9 @@ module gba_rev0(
 //parameter INIT_FILE  = "code/assembly_code/interrupt_test.mif";
 //parameter INIT_FILE  = "code/assembly_code/bus_test.mif";
 //parameter INIT_FILE  = "code/assembly_code/presentation_fibonacci.mif";
-//parameter INIT_FILE  = "code/assembly_code/memory_system_test.mif";
+parameter INIT_FILE  = "code/assembly_code/memory_system_test.mif";
 //parameter INIT_FILE  = "code/assembly_code/dma_modes_test.mif";
-parameter INIT_FILE  = "code/assembly_code/dma_irq_memory_test.mif";
+//parameter INIT_FILE  = "code/assembly_code/dma_irq_memory_test.mif";
 
 //=======================================================
 //  REG/WIRE declarations
@@ -93,6 +93,8 @@ wire clock = test_clk;
 wire clock_n = !test_clk;
 //assign clock = CLOCK_50;
 //assign clock_n = !CLOCK_50;
+//wire clock = clock_cpu;
+//wire clock_n = !clock_cpu;
 
 wire nrst;
 
@@ -224,8 +226,8 @@ end
 
 wire busy;
 reg nWAIT = 0;
-always @(negedge clock) begin
-    nWAIT <= (dma_active == 0 && !busy) ? 1'b1 : 1'b0;
+always @(posedge clock_n) begin
+    nWAIT <= (dma_active == 0 && !busy);
 end
 //=======================================================
 //  Structural coding
@@ -655,15 +657,26 @@ pll  pll(
 
 integer count = 0;
 wire startup_rst = SW[0] | ~pll_lock;
+//always @(posedge clock_cpu or posedge startup_rst) begin
+//	if (startup_rst) count <= 0;
+//	else if (count >= 32'd249_999) count <= 0;
+//	else count <= count+1;
+//end
+//
+//always @(posedge clock_cpu or posedge startup_rst) begin
+//    if (startup_rst)                 test_clk <= 1'b0;
+//    else if (count == 32'd249_999)   test_clk <= ~test_clk;
+//end
+
 always @(posedge clock_cpu or posedge startup_rst) begin
 	if (startup_rst) count <= 0;
-	else if (count >= 32'd249_999) count <= 0;
+	else if (count >= 32'd5) count <= 0;
 	else count <= count+1;
 end
 
 always @(posedge clock_cpu or posedge startup_rst) begin
     if (startup_rst)                 test_clk <= 1'b0;
-    else if (count == 32'd249_999)   test_clk <= ~test_clk;
+    else if (count == 32'd5)   test_clk <= ~test_clk;
 end
 
 //clkctrl_cpu clkctrl_cpu (

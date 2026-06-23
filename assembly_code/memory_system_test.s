@@ -549,6 +549,58 @@ phase_strict_gba:
     MOV     R1, #0xA5
     CHECK_EQ 0x07, R5
 
+@ ==============================================================================
+@ PHASE 9 - multiple (burst) store/read to SDRAM-backed EWRAM
+@ STM/STR-multiple and LDM keep the region enable asserted across consecutive
+@ beats with no instruction fetch between them, so this is the only stimulus
+@ that drives the SDRAM wrapper's per-beat handshake (sdram_controller_top.v).
+@ A dropped or stale beat shows up as a wrong/repeated value at one address.
+@ EWRAM is 16-bit-backed here, so the four word values keep their high half
+@ zero to survive the halfword path; distinct low halves catch mis-ordered or
+@ stale beats. PAK_ROM (0x08000000) is the same wrapper path.
+@ ==============================================================================
+phase_sdram_burst:
+    MOV     R7, #9
+    MOV     R4, #0x02000000
+    ADD     R4, R4, #0x600        @ isolated EWRAM burst window
+
+    LOADH   R0, 0x0AA0
+    LOADH   R1, 0x0BB1
+    LOADH   R2, 0x0CC2
+    LOADH   R3, 0x0DD3
+    STMIA   R4, {R0-R3}           @ four gap-less SDRAM stores
+
+@ ---- verify each store beat landed at its own address -----------------------
+    LDR     R2, [R4]
+    LOADH   R1, 0x0AA0
+    CHECK_EQ 0x01, R4
+    LDR     R2, [R4, #4]
+    LOADH   R1, 0x0BB1
+    CHECK_EQ 0x02, R4
+    LDR     R2, [R4, #8]
+    LOADH   R1, 0x0CC2
+    CHECK_EQ 0x03, R4
+    LDR     R2, [R4, #12]
+    LOADH   R1, 0x0DD3
+    CHECK_EQ 0x04, R4
+
+@ ---- multiple read back via LDM, then verify each loaded register ------------
+@ Target registers R3/R5/R6 survive CHECK_EQ (it only clobbers R0/R8/R9/R10),
+@ so they can be checked after the burst without being overwritten.
+    LDMIA   R4, {R0, R3, R5, R6}  @ four gap-less SDRAM loads
+    MOV     R2, R0
+    LOADH   R1, 0x0AA0
+    CHECK_EQ 0x05, R4
+    MOV     R2, R3
+    LOADH   R1, 0x0BB1
+    CHECK_EQ 0x06, R4
+    MOV     R2, R5
+    LOADH   R1, 0x0CC2
+    CHECK_EQ 0x07, R4
+    MOV     R2, R6
+    LOADH   R1, 0x0DD3
+    CHECK_EQ 0x08, R4
+
 all_pass:
     MOV     R7, #0x0A
     MOV     R0, #0xAD
