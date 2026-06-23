@@ -283,6 +283,8 @@ sdram_controller_top sdram_controller(
 
     .rd_en      (rden_pakrom),
     .wr_en      (we_pakrom),
+    .MAS        (MAS),
+    .sign_extend(sign_extend),
 	
     .addr       (addr_bus),
     .wr_data    (data_bus),

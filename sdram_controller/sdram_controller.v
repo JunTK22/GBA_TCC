@@ -22,6 +22,8 @@ module sdram_controller (
     wr_addr,
     wr_data,
     wr_enable,
+    byte_mask,
+    word,
 
     rd_addr,
     rd_data,
@@ -43,7 +45,7 @@ parameter BANK_WIDTH = 2;
 parameter SDRADDR_WIDTH = ROW_WIDTH > COL_WIDTH ? ROW_WIDTH : COL_WIDTH;
 parameter HADDR_WIDTH = BANK_WIDTH + ROW_WIDTH + COL_WIDTH;
 
-parameter CLK_FREQUENCY = 100;  // Mhz
+parameter CLK_FREQUENCY = 68;  // Mhz
 parameter REFRESH_TIME =  64;   // ms     (how often we need to refresh)
 parameter REFRESH_COUNT = 8192; // cycles (how many refreshes required per refresh time)
 
@@ -97,11 +99,13 @@ localparam CMD_PALL = 8'b10010001,
 /* Interface Definition */
 /* HOST INTERFACE */
 input  [HADDR_WIDTH-1:0]   wr_addr;
-input  [15:0]              wr_data;
+input  [31:0]              wr_data;
 input                      wr_enable;
+input  [1:0]               byte_mask;   // write DQM {low,high}; 0=enable lane
+input                      word;        // 1 = 32-bit access (two SDRAM half-beats)
 
 input  [HADDR_WIDTH-1:0]   rd_addr;
-output [15:0]              rd_data;
+output [31:0]              rd_data;
 input                      rd_enable;
 output                     rd_ready;
 
@@ -124,8 +128,11 @@ output                     data_mask_high;
 /* I/O Registers */
 
 reg  [HADDR_WIDTH-1:0]   haddr_r;
-reg  [15:0]              wr_data_r;
-reg  [15:0]              rd_data_r;
+reg  [31:0]              wr_data_r;
+reg  [1:0]               byte_mask_r;
+reg                      word_r;       // latched: this access is 32-bit
+reg                      beat;         // 0 = low half, 1 = high half
+reg  [31:0]              rd_data_r;
 reg                      busy;
 reg                      data_mask_low_r;
 reg                      data_mask_high_r;
@@ -158,8 +165,15 @@ assign {clock_enable, cs_n, ras_n, cas_n, we_n} = command[7:3];
 assign bank_addr      = (state[4]) ? bank_addr_r : command[2:1];
 assign addr           = (state[4] | state == INIT_LOAD) ? addr_r : { {SDRADDR_WIDTH-11{1'b0}}, command[0], 10'd0 };
 
-assign data = (state == WRIT_CAS) ? wr_data_r : 16'bz;
+assign data = (state == WRIT_CAS) ? (beat ? wr_data_r[31:16] : wr_data_r[15:0]) : 16'bz;
 assign rd_ready = rd_ready_r;
+
+// A word access advances to its high half when the low half's terminal state
+// completes (READ_READ, or WRIT_NOP2 once its hold counter expires). `!beat`
+// makes this self-clearing so it can only fire once per word.
+wire second_beat_go = word_r && !beat &&
+                      ( (state == READ_READ) ||
+                        (state == WRIT_NOP2 && state_cnt == 4'd0) );
 
 // HOST INTERFACE
 // all registered on posedge
@@ -171,8 +185,11 @@ always @ (posedge clk)
     state_cnt <= 4'hf;
 
     haddr_r <= {HADDR_WIDTH{1'b0}};
-    wr_data_r <= 16'b0;
-    rd_data_r <= 16'b0;
+    wr_data_r <= 32'b0;
+    byte_mask_r <= 2'b00;
+    word_r <= 1'b0;
+    beat <= 1'b0;
+    rd_data_r <= 32'b0;
     busy <= 1'b0;
     end
   else
@@ -187,22 +204,38 @@ always @ (posedge clk)
       state_cnt <= state_cnt - 1'b1;
 
     if (wr_enable)
+      begin
       wr_data_r <= wr_data;
+      byte_mask_r <= byte_mask;
+      end
 
+    // Capture the read half belonging to the current beat. For a word
+    // access rd_ready is asserted only after the high half (beat 1).
     if (state == READ_READ)
       begin
-      rd_data_r <= data;
-      rd_ready_r <= 1'b1;
+      if (beat) rd_data_r[31:16] <= data;
+      else      rd_data_r[15:0]  <= data;
+      rd_ready_r <= word_r ? beat : 1'b1;
       end
     else
       rd_ready_r <= 1'b0;
 
     busy <= state[4];
 
-    if (rd_enable)
-      haddr_r <= rd_addr;
-    else if (wr_enable)
-      haddr_r <= wr_addr;
+    // Address / beat sequencing. A new access latches the base address,
+    // captures its size, and clears the beat counter. A word access then
+    // advances to the high half (col+1, fresh ACT) when the low half ends.
+    if (rd_enable || wr_enable)
+      begin
+      haddr_r <= rd_enable ? rd_addr : wr_addr;
+      word_r  <= word;
+      beat    <= 1'b0;
+      end
+    else if (second_beat_go)
+      begin
+      haddr_r <= haddr_r + 1'b1;
+      beat    <= 1'b1;
+      end
 
     end
 
@@ -221,7 +254,9 @@ always @ (posedge clk)
 always @*
 begin
     if (state[4])
-      {data_mask_low_r, data_mask_high_r} = 2'b00;
+      // state[3] distinguishes WRIT_* (11xxx) from READ_* (10xxx).
+      // Writes honour the per-beat byte mask (DQM); reads enable both lanes.
+      {data_mask_low_r, data_mask_high_r} = state[3] ? byte_mask_r : 2'b00;
     else
       {data_mask_low_r, data_mask_high_r} = 2'b11;
 
@@ -372,7 +407,15 @@ begin
             next = WRIT_NOP2;
             state_cnt_nxt = 4'd1;
             end
-          // WRIT_NOP2: default - IDLE
+          WRIT_NOP2:
+            // Word access: re-activate for the high half; else finish.
+            if (word_r && !beat)
+              begin
+              next = WRIT_ACT;
+              command_nxt = CMD_BACT;
+              end
+            else
+              next = IDLE;
 
           // READ
           READ_ACT:
@@ -394,7 +437,15 @@ begin
             begin
             next = READ_READ;
             end
-          // READ_READ: default - IDLE
+          READ_READ:
+            // Word access: re-activate for the high half; else finish.
+            if (word_r && !beat)
+              begin
+              next = READ_ACT;
+              command_nxt = CMD_BACT;
+              end
+            else
+              next = IDLE;
 
           default:
             begin
