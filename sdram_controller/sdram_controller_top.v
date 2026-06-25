@@ -56,15 +56,18 @@ wire is_word  = MAS[1];            // MAS: 10=word, 01=half, 00=byte
 reg [24:0] addr_r = 0;
 reg [31:0] wr_data_r = 0;
 reg [1:0]  byte_mask_r = 2'b00;   // DQM {low,high} for the latched write beat
+reg        word_r = 0;            // 32-bit access: core does two SDRAM half-beats
 
 // Read-beat qualifiers, latched at request time, used to format read data.
 reg        rd_byte_r = 0;   // this beat is a byte load
-reg        rd_word_r = 0;   // this beat is a 32-bit word load
 reg        rd_lane_r = 0;   // addr[0]: which byte within the halfword
 reg        rd_sign_r = 0;   // sign-extend the loaded byte
 
 always @(posedge clock) begin
-    if (wr_en || rd_en) addr_r <= is_ewram ? {8'b0,addr[17:1]} : {1'b1,addr[24:1]};
+    if (wr_en || rd_en) begin
+        addr_r <= is_ewram ? {8'b0,addr[17:1]} : {1'b1,addr[24:1]};
+        word_r <= is_word;
+    end
     if (wr_en) begin
         // Byte: replicate into the low lane (core uses [15:0]); DQM picks the
         // addressed byte. Half/word: pass the full 32 bits; the core writes the
@@ -74,7 +77,6 @@ always @(posedge clock) begin
     end
     if (rd_en) begin
         rd_byte_r <= is_byte;
-        rd_word_r <= is_word;
         rd_lane_r <= addr[0];
         rd_sign_r <= sign_extend;
     end
@@ -82,9 +84,9 @@ end
 
 // Read Data
 
-wire [15:0] rd_data_i;
+wire [31:0] rd_data_i;
 wire        rd_ready;
-reg [15:0]  rd_data_r0 = 0, rd_data_r1 = 0, rd_data_r2 = 0;
+reg [31:0]  rd_data_r0 = 0, rd_data_r1 = 0, rd_data_r2 = 0;
 reg         rd_ready_r0 = 0, rd_ready_r1 = 0;
 
 wire rd_ready_pulse = !rd_ready_r1 && rd_ready_r0;
@@ -97,11 +99,14 @@ always @(posedge clock_sdram) begin
     if (rd_ready_pulse) rd_data_r2 <= rd_data_r0;
 end
 
-// Byte loads: select the addressed lane and (optionally) sign-extend.
-// Halfword/word loads keep the prior zero-extended-halfword behaviour.
+// Word loads return the full 32 bits the core assembled (low half in [15:0],
+// high half in [31:16]). Byte loads select the addressed lane of the low half
+// and optionally sign-extend. Halfword loads zero-extend the low half.
 wire [7:0]  rd_byte     = rd_lane_r ? rd_data_r2[15:8] : rd_data_r2[7:0];
 wire [31:0] rd_byte_ext = rd_sign_r ? {{24{rd_byte[7]}}, rd_byte} : {24'b0, rd_byte};
-assign rd_data = rd_byte_r ? rd_byte_ext : {16'b0, rd_data_r2};
+assign rd_data = word_r    ? rd_data_r2
+               : rd_byte_r ? rd_byte_ext
+               :             {16'b0, rd_data_r2[15:0]};
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -169,6 +174,7 @@ sdram_controller sdram_controlleri (
     .wr_addr       (addr_r),
     .wr_data       (wr_data_r),
     .byte_mask     (byte_mask_r),
+    .word          (word_r),
     .wr_enable     (wr_en_pulse),
 
     .rd_addr       (addr_r),
