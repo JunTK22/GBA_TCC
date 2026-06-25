@@ -1,14 +1,14 @@
 # Fdb version 4
-["bibtex monografia"] 1781742384.78647 "monografia.aux" "monografia.bbl" "monografia" 1781742387.55199 0
+["bibtex monografia"] 1782348761.14236 "monografia.aux" "monografia.bbl" "monografia" 1782350028.62039 0
   "./referencias.bib" 1781741792.10619 3218 3bfc398bbe9a432025ec5df26eadb993 ""
   "/usr/share/texmf-dist/bibtex/bib/abntex2/abntex2-options.bib" 1775415801 5396 4eb260dac60f150ae608d45252853090 ""
   "/usr/share/texmf-dist/bibtex/bst/abntex2/abntex2-num.bst" 1775415801 60065 0bf58df5e47e1a6c21c910ec88a893f4 ""
-  "monografia.aux" 1781742387.40681 12205 22dc7c37c465dbef2498117d27b62276 "pdflatex"
+  "monografia.aux" 1782350028.45907 12211 8f38bfc0f3e5d7b0abf3784b01a3f137 "pdflatex"
   (generated)
   "monografia.bbl"
   "monografia.blg"
   (rewritten before read)
-["pdflatex"] 1781742384.82012 "monografia.tex" "monografia.pdf" "monografia" 1781742387.55212 0
+["pdflatex"] 1782350025.86781 "monografia.tex" "monografia.pdf" "monografia" 1782350028.62052 0
   "/usr/share/texmf-dist/fonts/enc/dvips/base/8r.enc" 1775415801 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/share/texmf-dist/fonts/map/fontname/texfonts.map" 1775415801 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texmf-dist/fonts/tfm/adobe/symbol/psyr.tfm" 1775415801 1408 5937f58aa508ea2cea4901c07d10f5fe ""
@@ -171,11 +171,11 @@
   "imgs/de1-soc.png" 1781561282.01443 395319 2a8326ca42de970191a48a29e5b962aa ""
   "imgs/gba_diagram.png" 1781561281.80081 58586 e717049221815fb07cff62648ff59961 ""
   "imgs/rtl_atual.png" 1781561281.95291 1040094 eb78d0944a73ec41a283eef804e62fc6 ""
-  "monografia.aux" 1781742387.40681 12205 22dc7c37c465dbef2498117d27b62276 "pdflatex"
-  "monografia.bbl" 1781742384.81576 3109 3abc670d8f531be7fbbcdb635a62570f "bibtex monografia"
-  "monografia.lof" 1781742387.40781 2799 b427b4f2da96a47681503d3a3d72a133 "pdflatex"
-  "monografia.tex" 1781742286.60443 51071 0baf20b4eab7175bb4f52f917cf61a5d ""
-  "monografia.toc" 1781742387.40781 2288 1eeb150d7f7d8346fc83f2a112ac42e0 "pdflatex"
+  "monografia.aux" 1782350028.45907 12211 8f38bfc0f3e5d7b0abf3784b01a3f137 "pdflatex"
+  "monografia.bbl" 1782348761.18446 3109 3abc670d8f531be7fbbcdb635a62570f "bibtex monografia"
+  "monografia.lof" 1782350028.46007 2805 9e6ef824dcb92ca0092fd7b4944e94bc "pdflatex"
+  "monografia.tex" 1782350024.49261 51815 c81f734d25e49421ca408da27f2e5aab ""
+  "monografia.toc" 1782350028.46007 2288 649545196beeed21c39afd5fffddd8ca "pdflatex"
   "politex.cls" 1673509394 37803 3c553e1ff9991caa9df7aeca9293d2b8 ""
   (generated)
   "monografia.aux"

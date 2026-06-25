@@ -25,7 +25,7 @@
 \contentsline {subsection}{\numberline {3.3.1}Camada 1: Núcleo ARM7TDMI (implementada e validada)}{13}{}%
 \contentsline {subsection}{\numberline {3.3.2}Camada 2: Subsistema de Memória (integrada, em validação)}{13}{}%
 \contentsline {subsection}{\numberline {3.3.3}Camada 3: Saída de Vídeo (planejada)}{14}{}%
-\contentsline {subsection}{\numberline {3.3.4}Camada 4: Integração e Validação (planejada)}{14}{}%
+\contentsline {subsection}{\numberline {3.3.4}Camada 4: Integração e Validação (planejada)}{15}{}%
 \contentsline {section}{\numberline {3.4}Metodologia de Verificação}{15}{}%
 \contentsline {section}{\numberline {3.5}Cronograma Macro}{15}{}%
-\contentsline {chapter}{Referências}{17}{}%
+\contentsline {chapter}{Referências}{18}{}%

@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.6.4)  17 JUN 2026 21:26
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026/Arch Linux) (preloaded format=pdflatex 2026.6.4)  24 JUN 2026 22:13
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -874,12 +874,6 @@ Overfull \hbox (1.95367pt too wide) in paragraph at lines 8--8
 ranja), \OT1/cmtt/m/n/12 bus[]controller\OT1/ptm/m/n/12 , 
  []
 
-
-Overfull \hbox (12.62102pt too wide) in paragraph at lines 8--8
- \OT1/ptm/m/n/12 regi[]oes in-ter-nas (BIOS, EWRAM, IWRAM, VRAM, I/O, Pa-lette,
- OAM), \OT1/cmtt/m/n/12 PAK[]RAM 
- []
-
 )
 \tf@lof=\write4
 \openout4 = `monografia.lof'.
@@ -958,28 +952,25 @@ se-ada na FPGA Cy-clone V
 <imgs/rtl_atual.png, id=88, 2246.8743pt x 872.7807pt>
 File: imgs/rtl_atual.png Graphic file (type png)
 <use imgs/rtl_atual.png>
-Package pdftex.def Info: imgs/rtl_atual.png  used on input line 721.
+Package pdftex.def Info: imgs/rtl_atual.png  used on input line 722.
 (pdftex.def)             Requested size: 455.24411pt x 176.83034pt.
  [13 <./imgs/rtl_atual.png>] [14]
-Underfull \hbox (badness 8075) in paragraph at lines 852--857
+Underfull \hbox (badness 8075) in paragraph at lines 859--864
 []\OT1/ptm/m/n/12 Implementa[][]ao RTL do n[]ucleo ARM7TDMI;
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 858--863
+Underfull \hbox (badness 10000) in paragraph at lines 865--870
 []\OT1/ptm/m/n/12 Subsistema de mem[]oria: \OT1/cmtt/m/n/12 bus[]controller\OT1
 /ptm/m/n/12 ,
  []
 
 
-Underfull \hbox (badness 4181) in paragraph at lines 858--863
+Underfull \hbox (badness 4181) in paragraph at lines 865--870
 \OT1/ptm/m/n/12 valida[][]ao fun-ci-o-nal do ca-mi-nho in-te-grado em
  []
 
-
-LaTeX Warning: `h' float specifier changed to `ht'.
-
-(./monografia.bbl [15] [16]) [17
+[15] (./monografia.bbl [16] [17]) [18
 
 
 ] (./monografia.aux)
@@ -989,22 +980,22 @@ L3 programming layer <2026-01-19>
  ***********
  ) 
 Here is how much of TeX's memory you used:
- 17309 strings out of 469495
- 337839 string characters out of 5470099
- 773449 words of memory out of 5000000
- 45625 multiletter control sequences out of 15000+600000
+ 17310 strings out of 469495
+ 337856 string characters out of 5470099
+ 767239 words of memory out of 5000000
+ 45626 multiletter control sequences out of 15000+600000
  659490 words of font info for 99 fonts, out of 8000000 for 9000
  16 hyphenation exceptions out of 8191
- 84i,14n,104p,969b,916s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 84i,14n,104p,975b,916s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/share/
 texmf-dist/fonts/type1/public/amsfonts/cm/cmtt12.pfb></usr/share/texmf-dist/fon
 ts/type1/public/amsfonts/cm/cmtt8.pfb></usr/share/texmf-dist/fonts/type1/urw/ti
 mes/utmb8a.pfb></usr/share/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/sh
 are/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on monografia.pdf (27 pages, 6229311 bytes).
+Output written on monografia.pdf (28 pages, 6230394 bytes).
 PDF statistics:
- 135 PDF objects out of 1000 (max. 8388607)
- 84 compressed objects within 1 object stream
+ 138 PDF objects out of 1000 (max. 8388607)
+ 86 compressed objects within 1 object stream
  0 named destinations out of 1000 (max. 500000)
  43 words of extra memory for PDF output out of 10000 (max. 10000000)
 

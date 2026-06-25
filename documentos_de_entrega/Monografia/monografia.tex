@@ -84,8 +84,8 @@ presente entrega intermediária, o núcleo ARM7TDMI já se encontra
 implementado e validado, tanto em simulação quanto em hardware, e
 constitui a prova de conceito apresentada neste momento. O subsistema
 de memória, mapa de memória do GBA, controlador e árbitro de
-barramento, canal de DMA e controlador de SDRAM para a ROM de
-cartucho, já se encontra descrito e integrado ao \textit{datapath},
+barramento, canais de DMA e controlador de SDRAM para a ROM de
+cartucho e a EWRAM, já se encontra descrito e integrado ao \textit{datapath},
 com a validação funcional do caminho integrado ainda em andamento; o
 subsistema de vídeo e a integração final permanecem como continuidade
 prevista do trabalho.
@@ -119,8 +119,8 @@ development stage, corresponding to this intermediate delivery, the
 ARM7TDMI core is already implemented and validated, both in
 simulation and on hardware, and constitutes the proof of concept
 presented at this point. The memory subsystem, the GBA memory map,
-the bus controller and arbiter, a DMA channel and an SDRAM controller
-for the cartridge ROM, is already described and integrated into the
+the bus controller and arbiter, the DMA channels and an SDRAM controller
+for the cartridge ROM and EWRAM, is already described and integrated into the
 datapath, with functional validation of the integrated path still
 ongoing; the video subsystem and the final integration remain the
 planned continuation of the work.
@@ -364,9 +364,9 @@ controlador de barramento que decodifique os bits \texttt{[27:24]} do
 endereço e roteie cada transação à região correta do mapa, com
 larguras de palavra de 8, 16 e 32~bits e tratamento de alinhamento
 (E3), além da integração com a SDRAM da placa DE1-SoC para abrigar a
-ROM de cartucho (\texttt{PAK\_ROM}) por meio de um controlador
-dedicado~\cite{CycloneV}, ficando as demais regiões em memória
-\textit{on-chip} (E4). A saída gráfica demanda a geração de um
+ROM de cartucho (\texttt{PAK\_ROM}) e a \texttt{EWRAM} por meio de um
+controlador dedicado~\cite{CycloneV}, ficando as demais regiões em
+memória \textit{on-chip} (E4). A saída gráfica demanda a geração de um
 sinal VGA padrão, por exemplo, 640$\times$480 a 60~Hz, mapeado a
 partir do \textit{framebuffer} de 240$\times$160 do GBA, com seus
 sincronismos horizontal e vertical (E5). No plano do controle de
@@ -403,9 +403,9 @@ integrado ao operando B, o multiplicador 32$\times$32 com saídas
 cobrindo ARM e Thumb e o tratamento completo de exceções (Reset, SWI,
 Undef, Prefetch Abort, Data Abort, IRQ e FIQ). O segundo objetivo (O2)
 é implementar o subsistema de memória do GBA, com os modelos
-sintetizáveis das regiões internas (BIOS, EWRAM, IWRAM, I/O, Palette e
-OAM), o controlador de SDRAM para a ROM de cartucho externa
-(\texttt{PAK\_ROM}), o controlador de barramento com decodificação por
+sintetizáveis das regiões internas (BIOS, IWRAM, I/O, Palette e
+OAM), o controlador de SDRAM externa, que abriga a ROM de cartucho
+(\texttt{PAK\_ROM}) e a \texttt{EWRAM}, o controlador de barramento com decodificação por
 região e \textit{mux} de leitura, o árbitro de barramento entre o
 processador e os canais de DMA, e o tratamento dos tamanhos de acesso
 (\textit{byte}, \textit{halfword} e \textit{word}) com extensão de
@@ -625,11 +625,11 @@ A implementação é realizada na placa Altera DE1-SoC, da
 Terasic~\cite{TerasicDE1SoC} (Figura~\ref{fig:de1soc}), que abriga uma FPGA
 Cyclone~V (\mbox{5CSEMA5F31C6}~\cite{CycloneV}). Entre os recursos da placa
 relevantes ao projeto, destacam-se os 64~MiB de SDRAM externa de
-16~bits, destinada exclusivamente a abrigar a ROM de cartucho
-(\texttt{PAK\_ROM}), região que, na fase final do projeto, poderá
+16~bits, que abriga a ROM de cartucho (\texttt{PAK\_ROM}) e a EWRAM,
+sendo a \texttt{PAK\_ROM} a região que, na fase final do projeto, poderá
 ser \emph{escrita} para carregar uma ROM a partir de um cartão SD,
 e os blocos M10K de memória \textit{on-chip}, que hospedam as demais
-regiões internas do mapa (BIOS, EWRAM, IWRAM, Palette RAM, VRAM e OAM). A saída VGA,
+regiões internas do mapa (BIOS, IWRAM, Palette RAM, VRAM e OAM). A saída VGA,
 com DAC de 8 bits por canal, serve à interface gráfica, enquanto os
 quatro \textit{push-buttons}, os dez \textit{switches}, os LEDs e os
 seis \textit{displays} de sete segmentos são empregados na depuração e
@@ -658,8 +658,9 @@ O fluxo de desenvolvimento articula um conjunto de ferramentas
 consolidadas. A síntese, o \textit{place-and-route}, a análise
 temporal e a geração do \textit{bitstream} cabem ao Quartus Prime
 15.1~\cite{CycloneV}, enquanto a simulação RTL funcional é conduzida no
-ModelSim/QuestaSim por meio de \textit{scripts} TCL dedicados a cada
-cenário de teste. Os \textit{cores} de PLL, de controle de
+ModelSim/QuestaSim sobre o topo de simulação \texttt{gba\_rev0\_sim}, um
+gêmeo \textit{board-less} do topo de síntese gerado por NativeLink, que
+carrega o programa de teste a partir de um arquivo MIF. Os \textit{cores} de PLL, de controle de
 \textit{clock} e de SignalTap são gerados no Qsys/Platform Designer. A
 geração dos programas de teste, em ARM e Thumb, parte de código
 \textit{assembly} processado pela toolchain \texttt{arm-none-eabi}
@@ -746,17 +747,17 @@ gera os sinais de \emph{read}/\emph{write enable} por região e
 multiplexa os dados lidos de volta ao processador. Acima dele, o
 \texttt{bus\_arbiter.v} arbitra o acesso ao barramento único entre o
 processador e os quatro canais de DMA, ao passo que o módulo
-\texttt{dma.v} (canal DMA0, no momento) executa as transferências em
-bloco a partir dos registradores de controle providos pelo
+\texttt{dma.v}, instanciado nos quatro canais (DMA0--DMA3), executa as
+transferências em bloco a partir dos registradores de controle providos pelo
 \texttt{io\_registers.v}. Os módulos de região (\texttt{bios.v},
-\texttt{ewram.v}, \texttt{iwram.v}, \texttt{io\_registers.v},
+\texttt{iwram.v}, \texttt{io\_registers.v},
 \texttt{palette\_ram.v}, \texttt{vram.v}, \texttt{oam.v} e
 \texttt{cart\_ram.v}), inferidos em blocos M10K \textit{on-chip},
 modelam cada faixa interna do mapa, com tratamento de tamanho de
 acesso e extensão de sinal por região.
 
-A ROM de cartucho (\texttt{PAK\_ROM}) é a única região mapeada na
-SDRAM externa da DE1-SoC, servida por um controlador de SDRAM próprio
+A ROM de cartucho (\texttt{PAK\_ROM}) e a EWRAM são as regiões mapeadas na
+SDRAM externa da DE1-SoC, servidas por um controlador de SDRAM próprio
 (\texttt{sdram\_controller.v} e seu envoltório
 \texttt{sdram\_controller\_top.v}), já instanciado no topo do projeto.
 Esse controlador, desenvolvido para substituir a IP de referência
@@ -764,9 +765,14 @@ antes utilizada, opera o núcleo de acesso à SDRAM em um domínio de
 \textit{clock} próprio e realiza a sincronização entre esse domínio e
 o domínio do processador por meio de uma lógica de \textit{clock-domain
 crossing} com retenção de requisição, de modo que uma transação que
-coincida com um ciclo de \textit{refresh} não seja perdida. Como a
-região é escrevível, prevê-se, na fase final do projeto, utilizá-la
-para carregar uma ROM a partir de um cartão SD para a SDRAM.
+coincida com um ciclo de \textit{refresh} não seja perdida. Sobre o
+barramento físico de 16~bits da SDRAM, o controlador suporta acessos de
+\textit{byte}, \textit{halfword} e \textit{word} --- estes últimos
+realizados como duas meias-transferências sequenciais de 16~bits ---,
+com máscara de \textit{bytes} na escrita e extensão de sinal na leitura.
+Como a região de \texttt{PAK\_ROM} é escrevível, prevê-se, na fase final
+do projeto, utilizá-la para carregar uma ROM a partir de um cartão SD
+para a SDRAM.
 % [INDICAR: incluir, no Capítulo 3 final, o diagrama de tempo do
 %  protocolo SDRAM utilizado, com base no datasheet do dispositivo
 %  IS42S16320D montado na DE1-SoC.]
@@ -802,9 +808,10 @@ executando a mesma ROM, tomado como referência funcional.
 \label{sec:verificacao}
 
 A verificação apoia-se em três níveis complementares. O primeiro é a
-simulação RTL no QuestaSim, dirigida por \textit{scripts} TCL
-(\texttt{test.tcl} e \texttt{interrupt\_test.tcl}), com inspeção das
-formas de onda dos barramentos, dos registradores do
+simulação RTL no QuestaSim, conduzida sobre o topo de simulação
+\texttt{gba\_rev0\_sim} --- um gêmeo \textit{board-less} do topo de
+síntese, clocado diretamente e carregado com o programa de teste ---,
+com inspeção das formas de onda dos barramentos, dos registradores do
 \texttt{reg\_bank}, do \textit{datapath} interno do \texttt{decoder} e
 dos sinais de controle. O segundo é a execução em hardware na DE1-SoC,
 com captura, via SignalTap, dos registradores $r_0$--$r_{15}$ e dos
@@ -925,8 +932,8 @@ mesma pasta.
     \node[plan, minimum width=17mm] (disp) at (20.6,3.35) {\textbf{Display}\\(VGA ou LCD)};
     \draw[rd] (ppu.east) -- (disp.west);
 
-    \node[plan, minimum width=22mm] (snd) at (17.75,1.25) {\textbf{Sound Generator}};
-    \node[plan, minimum width=16mm] (aud) at (20.6,1.25) {\textbf{Áudio}};
+    \node[plan, minimum width=22mm] (snd) at (15.9,-2.8) {\textbf{Sound Generator}};
+    \node[plan, minimum width=16mm] (aud) at (20.6,-2.8) {\textbf{Áudio}};
     \draw[rd] (snd.east) -- (aud.west);
 
     %, master taps onto the bus,
@@ -934,29 +941,32 @@ mesma pasta.
     \draw[bus2] (dma.south) -- (dma  |- O) node[wlbl,right]{32\,b};
     \draw[->, thick] (bcl.south) -- (bcl |- O);
     \draw[bus2] (ppu.south) -- (ppu  |- O) node[wlbl,right]{16/32\,b};
-    \draw[bus2] (snd.south) -- (snd  |- O) node[wlbl,right]{32\,b};
+    \draw[bus2] (snd.north) -- (snd  |- O) node[wlbl,right]{32\,b};
 
     % ===================== Cartridge / external (top-left) =====================
-    \node[ext] (pakrom) at (2.4,3.2) {\textbf{SDRAM}\\PAK\_ROM\\(externa)};
-    \node[ext] (sdramc) at (2.4,1.25) {\textbf{SDRAM}\\\textbf{Controller}};
+    \node[ext] (pakrom) at (3.1,4.7) {\textbf{SDRAM}\\PAK\_ROM\\(externa)};
+    \node[ext] (ewram) at (-0.2,2.75) {\textbf{SDRAM}\\EWRAM\\(externa)};
+    \node[ext] (sdramc) at (3.1,2.75) {\textbf{SDRAM}\\\textbf{Controller}};
+
     \node[mem, minimum width=15mm] (pakram) at (-0.1,1.25) {\textbf{PAK\_RAM}\\(save)};
 
     \draw[bus2] (pakrom.south) -- (sdramc.north) node[wlbl,right]{16\,b};
+    \draw[bus2] (ewram.east)   -- (sdramc.west) node[wlbl,above]{16\,b};
     \draw[bus2] (pakram.south) -- (pakram |- O) node[wlbl,right]{8\,b};
-    \draw[bus2] (sdramc.south) -- (sdramc |- O) node[wlbl,right]{16\,bit};
+    \draw[bus2] (sdramc.south) -- (sdramc |- O);
 
     % ===================== Slaves (below the bus) =====================
     \node[plan, minimum width=15mm] (userin)  at (1.8,-2.8) {\textbf{User}\\\textbf{Input}};
     \node[plan, minimum width=15mm] (keyctrl) at (4.4,-2.8) {\textbf{Key}\\\textbf{Controller}};
     \node[mem] (bios)  at (6.8,-2.8)  {\textbf{BIOS}\\16\,KiB};
     \node[mem] (iwram) at (9.0,-2.8)  {\textbf{IWRAM}\\32\,KiB};
-    \node[mem] (ewram) at (11.2,-2.8) {\textbf{EWRAM}\\256\,KiB};
-    \node[mem] (vram)  at (13.4,-2.8) {\textbf{VRAM}\\96\,KiB};
-    \node[mem, minimum width=18mm] (io) at (15.9,-2.8) {\textbf{I/O}\\registradores};
+    \node[mem] (vram)  at (11.2,-2.8) {\textbf{VRAM}\\96\,KiB};
+    \node[mem, minimum width=18mm] (io) at (13.4,-2.8) {\textbf{I/O}\\registradores};
+    %\node[mem, minimum width=18mm] (io) at (15.9,-2.8) {\textbf{I/O}\\registradores};
 
     \draw[rd] (userin.east) -- (keyctrl.west);
     \draw[bus2] (keyctrl.north) -- (keyctrl |- O);
-    \foreach \n / \x in {bios/32,iwram/32,ewram/16,vram/16,io/16}{
+    \foreach \n / \x in {bios/32,iwram/32,vram/16,io/16}{
         \draw[bus2] (\n.north) -- (\n |- O) node[wlbl,right]{\x\,b};
     }
 
@@ -977,9 +987,9 @@ mesma pasta.
     }
     \caption{Arquitetura-objetivo do projeto. O núcleo ARM7TDMI (azul) já se encontra implementado e
         validado; o subsistema de memória (laranja), \texttt{bus\_controller},
-        regiões internas (BIOS, EWRAM, IWRAM, VRAM, I/O, Palette, OAM),
+        regiões internas (BIOS, IWRAM, VRAM, I/O, Palette, OAM),
         \texttt{PAK\_RAM} e o controlador da SDRAM externa, que abriga
-        exclusivamente a \texttt{PAK\_ROM}, além da arbitragem de barramento e do DMA,
+        a \texttt{PAK\_ROM} e a EWRAM, além da arbitragem de barramento e dos quatro canais de DMA,
         encontra-se implementado e integrado ao \textit{datapath}, com a validação funcional
         do caminho integrado ainda em andamento; os blocos
         de PPU e saída de vídeo, gerador de som e áudio, e a interface de entrada (\textit{Key Controller}) permanecem
