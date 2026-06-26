@@ -116,7 +116,6 @@ wire nRW;
 wire nRW_CPU;
 wire [1:0] MAS;
 wire [1:0] MAS_cpu;
-wire MAS_16 = MAS[1] || MAS[0];
 
 wire sign_extend;
 
@@ -225,9 +224,10 @@ end
 ///////////////////////////////////////
 
 wire busy;
+wire [5:0] ready_mem;
 reg nWAIT = 0;
 always @(posedge clock_n) begin
-    nWAIT <= (dma_active == 0 && !busy);
+    nWAIT <= (!|dma_active && !busy && &ready_mem);
 end
 //=======================================================
 //  Structural coding
@@ -389,7 +389,7 @@ bios #(
 //    .rdata	(data_ewram),
 //    .we		(we_ewram),
 //    .rden	(rden_ewram),
-//    .size	(MAS_16),           // 0=byte, 1=halfword
+//    .size	(MAS),           // 0=byte, 1=halfword
 //    .sign_extend (sign_extend),
 //    .ready	(),
 //    .misalign_fault	()
@@ -404,7 +404,7 @@ iwram iwram (
     .rden	(rden_iwram),
     .size	(MAS),           // 00=byte 01=half 10=word
     .sign_extend (sign_extend),
-    .ready	(),
+    .ready	(ready_mem[0]),
     .misalign_fault	()
 );
 
@@ -415,9 +415,9 @@ palette_ram palette_ram (
     .rdata	(data_palram),
     .we		(we_palram),
     .rden	(rden_palram),
-    .size	(MAS_16),           // 0=byte, 1=halfword
+    .size	(MAS),           // 0=byte, 1=halfword
     .sign_extend (sign_extend),
-    .ready	(),
+    .ready	(ready_mem[1]),
     .misalign_fault	()
 );
 
@@ -428,9 +428,9 @@ vram vram (
     .rdata	(data_vram),
     .we		(we_vram),
     .rden	(rden_vram),
-    .size	(MAS_16),           // 0=byte, 1=halfword
+    .size	(MAS),           // 0=byte, 1=halfword
     .sign_extend (sign_extend),
-    .ready	(),
+    .ready	(ready_mem[2]),
     .misalign_fault	()
 );
 
@@ -443,7 +443,7 @@ oam oam (
     .rden	(rden_oam),
     .size	(MAS),
     .sign_extend (sign_extend),
-    .ready	(),
+    .ready	(ready_mem[3]),
     .misalign_fault	()
 );
 
@@ -453,7 +453,11 @@ cart_ram cart_ram (
     .wdata	(data_bus),
     .rdata	(data_cartram),
     .we		(we_cartram),
-    .rden	(rden_cartram)
+    .rden	(rden_cartram),
+	.size	(MAS),
+    .sign_extend (sign_extend),
+    .ready	(ready_mem[4]),
+    .misalign_fault	()
 );
 
 io_registers io_registers (
@@ -466,7 +470,7 @@ io_registers io_registers (
     .we		(we_ioram),
     .size	(MAS),             // 00=byte 01=half 10=word
     .sign_extend (sign_extend),
-    .ready	(),
+    .ready	(ready_mem[5]),
     .misalign_fault	(),
     //---------------- Hardware-driven read fields ----------------
     //  No PPU/keypad/serial hardware wired yet — tie to idle defaults.
@@ -649,9 +653,9 @@ pll  pll(
 //	.rst	(~nrst|| SW[0]),
 	.rst	(SW[0]),
 
-	.outclk_0(clock_cpu),       // 2 MHz
-	.outclk_1(clock_sdram),     // 100 MHz
-	.outclk_2(clock_sdram_d),   // 100 MHz -3000 ps
+	.outclk_0(clock_cpu),       // 17 MHz
+	.outclk_1(clock_sdram),     // 4*17 MHz
+	.outclk_2(clock_sdram_d),   // 4*17 MHz -120°
 	.locked  (pll_lock)
 );
 

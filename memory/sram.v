@@ -68,15 +68,7 @@ module sram #(
     // -------------------------------------------------------------------------
     //  Alignment check (combinational)
     // -------------------------------------------------------------------------
-    reg misalign_comb;
-    always @(*) begin
-        case (size)
-            SIZE_BYTE: misalign_comb = 1'b0;
-            SIZE_HALF: misalign_comb = addr[0];
-            SIZE_WORD: misalign_comb = |addr[1:0];
-            default:   misalign_comb = 1'b0;
-        endcase
-    end
+    wire misalign_comb = ((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0]);
     assign ready = ~misalign_comb;
 
     // -------------------------------------------------------------------------
