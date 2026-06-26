@@ -4,7 +4,6 @@ module decoder(
 	input	wire [31:0]	SPSR,
 	input	wire 		CLK,
 	input	wire 		nrst,
-	input	wire 		addr_odd, // Receives the bit address[1] to determine address oddness during thumb mode
 
     input  	wire        nIRQ,         // Interrupt requests
     input  	wire        nFIQ,
@@ -269,16 +268,13 @@ always @(posedge CLK) begin
 	Data_o	<= Data_i;
 end
 
-wire [3:0] mem_section = Data_i[27:24];
-wire section_32b = mem_section == 4'h0 || mem_section == 4'h1 || mem_section == 4'h3 || mem_section == 4'h7;
-
 always @(posedge CLK or negedge nrst) begin // Fetch Register
 	// Instruction hE1A00000 -> MOV R0, R0 (NOP)
 	if (~nrst) begin
 		instruct_reg <= 32'hE1A00000;
 	end else begin
 		if (pipeline_halt_r) instruct_reg <= instruct_reg;
-		else instruct_reg <= section_32b ? (thumb_state ? (addr_odd ? Data_i[31:16] : Data_i[15:0]) : Data_i) : Data_i;
+		else instruct_reg <= thumb_state ? Data_i[15:0] : Data_i;
 	end
 end
 
@@ -508,7 +504,7 @@ always @(posedge CLK) begin
 		Shifter_reg_f	 <= 0;
 		signEx_f		 <= 0;
 		wait_f			 <= 0;
-		MAS		 		 <= 2'b10;
+		MAS		 		 <= thumb_state ? 2'b01 : 2'b10;
 
 		Wr_Data_reg_en	<= 0;
 		Reg_bank_en		<= 0;
@@ -1102,6 +1098,7 @@ always @(posedge CLK) begin
 					Bus_B_sel 		<= Immediate;
 
 					Load_f 			<= instruct_reg[11];
+					MAS				<= 2'b10;
 
 					Rd_o			<= instruct_reg[10:8];
 					Rn_o			<= 4'b1101; // R13
@@ -1144,6 +1141,7 @@ always @(posedge CLK) begin
 					Write_Back_f	<= 1;
 					PC_LR_f			<= instruct_reg[8];
 					wait_f			<= 1;
+					MAS				<= 2'b10;
 
 					Wr_Data_reg_en	<= ~instruct_reg[11]; // PUSH (L=0): latch register data for store
 					Addr_reg_sel	<= instruct_reg[11] ? Rn_bus : ALU_bus;
@@ -1170,6 +1168,7 @@ always @(posedge CLK) begin
 					Pre_Pos_Indx_f	<= 1'b0;
 					Write_Back_f	<= 1'b1;
 					wait_f			<= 1;
+					MAS				<= 2'b10;
 
 					Wr_Data_reg_en	<= ~instruct_reg[11]; // STMIA (L=0): latch register data for store
 					Addr_reg_sel	<= Rn_bus; // first cycle: load addr from Rb
@@ -1508,7 +1507,7 @@ always @(posedge CLK) begin
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
 						opcode_o <= MOV; // Mov Rd <- Data_reg_in
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Reg_bank_en <= 1;
 						Wr_Data_reg_en <= 0;
 						Addr_reg_sel <= Incrementer_bus;
@@ -1520,7 +1519,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						core_nRW <= 0;
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
@@ -1533,7 +1532,7 @@ always @(posedge CLK) begin
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
 						opcode_o <= MOV; // Mov Rd <- Data_reg_in
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Reg_bank_en <= 1;
 						Wr_Data_reg_en <= 0;
 						Addr_reg_sel <= Incrementer_bus;
@@ -1545,7 +1544,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						core_nRW <= 0;
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
@@ -1558,7 +1557,7 @@ always @(posedge CLK) begin
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
 						opcode_o <= MOV; // Mov Rd <- Data_reg_in
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Reg_bank_en <= 1;
 						Wr_Data_reg_en <= 0;
 						Addr_reg_sel <= Incrementer_bus;
@@ -1570,7 +1569,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						core_nRW <= 0;
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
@@ -1583,7 +1582,7 @@ always @(posedge CLK) begin
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
 						opcode_o <= MOV; // Mov Rd <- Data_reg_in
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Reg_bank_en <= 1;
 						Wr_Data_reg_en <= 0;
 						Addr_reg_sel <= Incrementer_bus;
@@ -1595,7 +1594,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						core_nRW <= 0;
-						MAS <= 2'b10;
+						MAS <= 2'b01;
 						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
@@ -1606,6 +1605,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						opcode_o <= MOV; // Mov Rd <- Data_reg_in
+						MAS <= 2'b01;
 						Reg_bank_en <= 1;
 						Addr_reg_sel <= Incrementer_bus;
 						Bus_B_sel <= Data_reg_in;
@@ -1615,6 +1615,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						core_nRW <= 0;
+						MAS <= 2'b01;
 						Addr_reg_sel <= Incrementer_bus;
 					end
 				end
@@ -1665,6 +1666,7 @@ always @(posedge CLK) begin
 					Wr_Data_reg_en <= 0;
 				end else if (cycle_count[2:1] == 2'b01) begin
 					core_nRW <= 0;
+					MAS <= 2'b01;
 					Writeback_en <= 0;
 					Wr_Data_reg_en <= 0;
 					Addr_reg_sel <= Incrementer_bus;
@@ -1696,6 +1698,7 @@ always @(posedge CLK) begin
 					Wr_Data_reg_en <= 0;
 				end else if (cycle_count[2:1] == 2'b01) begin
 					core_nRW <= 0;
+					MAS <= 2'b01;
 					Writeback_en <= 0;
 					Wr_Data_reg_en <= 0;
 					Addr_reg_sel <= Incrementer_bus;

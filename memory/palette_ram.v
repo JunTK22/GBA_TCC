@@ -13,7 +13,7 @@
 module palette_ram (
     input  wire        clk,
     input  wire [9:0]  addr,           // 1 KB byte address
-    input  wire [15:0] wdata,
+    input  wire [31:0] wdata,
     output wire [31:0] rdata,
     input  wire        we,
     input  wire        rden,
@@ -32,7 +32,7 @@ module palette_ram (
         .clk            (clk),
         .addr           (addr),
         .wdata          (wdata),
-        .rdata          (rdata_mem),
+        .rdata          (rdata),
         .we             (we),
         .rden           (rden),
         .size           (size),
@@ -40,7 +40,5 @@ module palette_ram (
         .ready          (ready),
         .misalign_fault (misalign_fault)
     );
-
-    assign rdata = {{16{sign_extend ? rdata_mem[15] : 1'b0}},rdata_mem};
 
 endmodule

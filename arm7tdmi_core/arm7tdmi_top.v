@@ -368,7 +368,6 @@ module arm7tdmi_top (
         .SPSR               (SPSR),
         .CLK                (clk),
         .nrst               (reset_n),
-        .addr_odd           (A[1]),
 
         .nIRQ               (nIRQ),
         .nFIQ               (nFIQ),
