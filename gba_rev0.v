@@ -141,6 +141,7 @@ wire [31:0] data_sdram;
 wire        rden_bios;
 wire        rden_ewram;
 wire        rden_iwram;
+wire        rden_ioram;
 wire        rden_palram;
 wire        rden_vram;
 wire        rden_oam;
@@ -227,7 +228,7 @@ wire busy;
 wire [5:0] ready_mem;
 reg nWAIT = 0;
 always @(posedge clock_n) begin
-    nWAIT <= (!|dma_active && !busy && &ready_mem);
+    nWAIT <= (!(|dma_active) && !busy && &ready_mem);
 end
 //=======================================================
 //  Structural coding
@@ -300,6 +301,7 @@ bus_controller bus_controller(
 	.rden_bios		(rden_bios),
 	.rden_ewram		(rden_ewram),
 	.rden_iwram		(rden_iwram),
+	.rden_ioram 	(rden_ioram),
 	.rden_palram	(rden_palram),
 	.rden_vram		(rden_vram),
 	.rden_oam		(rden_oam),
@@ -377,9 +379,11 @@ bios #(
     .INIT_FILE (INIT_FILE)
 ) bios (
     .clk	(clock_n),
-    .addr	(addr_bus[13:2]),        // word address (4096 32-bit words = 16 KB)
+    .addr	(addr_bus),        // word address (4096 32-bit words = 16 KB)
     .rdata	(data_bios),
-    .rden	(rden_bios)
+    .rden	(rden_bios),
+    .size	(MAS),             // 00=byte 01=half 10=word
+    .sign_extend (sign_extend)
 );
 
 //ewram ewram (
@@ -464,10 +468,11 @@ io_registers io_registers (
     .clk	(clock_n),
     .reset_n	(nrst),
     //---------------- CPU bus ----------------
-    .addr	(addr_bus[9:0]),       // byte address within 1 KB IO space
+    .addr	(addr_bus),       // byte address within 1 KB IO space
     .wdata	(data_bus),
     .rdata	(data_ioram),
     .we		(we_ioram),
+    .rden   (rden_ioram),
     .size	(MAS),             // 00=byte 01=half 10=word
     .sign_extend (sign_extend),
     .ready	(ready_mem[5]),
