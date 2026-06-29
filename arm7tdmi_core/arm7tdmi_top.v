@@ -333,8 +333,7 @@ module arm7tdmi_top (
         .we       (wr_data_reg_en),
         .nRW      (core_nRW),
         .data_out (DOUT),
-        .nENOUT   (nENOUT),
-        .data_bus_oe ()
+        .nENOUT   (nENOUT)
     );
 
     address_reg address_reg (

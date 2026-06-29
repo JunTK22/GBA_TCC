@@ -18,6 +18,7 @@ module bus_controller(
 	output reg			rden_bios	 = 0,
 	output reg			rden_ewram	 = 0,
 	output reg			rden_iwram	 = 0,
+	output reg			rden_ioram	 = 0,
 	output reg			rden_palram	 = 0,
 	output reg			rden_vram	 = 0,
 	output reg			rden_oam	 = 0,
@@ -70,6 +71,7 @@ always @(*) begin
 	rden_bios	= 0;
 	rden_ewram	= 0;
 	rden_iwram	= 0;
+	rden_ioram	= 0;
 	rden_palram	= 0;
 	rden_vram	= 0;
 	rden_oam	= 0;
@@ -81,6 +83,7 @@ always @(*) begin
 			4'h1: rden_bios 	= 1;	//BIOS
 			4'h2: rden_ewram 	= 1;	//EWRAM
 			4'h3: rden_iwram 	= 1;	//IWRAM
+			4'h4: rden_ioram 	= 1;	//IORAM
 			4'h5: rden_palram 	= 1;	//PAL_RAM
 			4'h6: rden_vram 	= 1;	//VRAM
 			4'h7: rden_oam 		= 1;	//OAM
@@ -92,7 +95,6 @@ always @(*) begin
 			4'hD: rden_pakrom 	= 1;	//PAK_ROM
 			4'hE: rden_cartram 	= 1;	//CART_RAM
 			4'hF: rden_cartram 	= 1;	//CART_RAM
-			default:;
 		endcase
 	end
 end

@@ -57,6 +57,7 @@ module gba_ram_w16 #(
 	reg STATE 	   = NORMAL;
 	reg NEXT_STATE = NORMAL;
 	reg	beat = 0;
+	reg	stall = 0;
 	
 	always @(posedge clk) begin
 		STATE <= NEXT_STATE;
@@ -66,11 +67,15 @@ module gba_ram_w16 #(
 		case (STATE)
 			NORMAL: begin
 				beat = 0;
-				if (size == SIZE_WORD && (rden = 1 || we == 1)) NEXT_STATE = WORD;
-				else NEXT_STATE = NORMAL;
+				stall = 0;
+				if (size == SIZE_WORD && (rden || we)) begin 
+                    stall = 1;
+                    NEXT_STATE = WORD;
+                end else NEXT_STATE = NORMAL;
 			end
 			WORD: begin
 				beat = 1;
+                stall = 0;
 				NEXT_STATE = NORMAL;
 			end
 		endcase
@@ -85,8 +90,8 @@ module gba_ram_w16 #(
     // -------------------------------------------------------------------------
     //  Alignment check
     // -------------------------------------------------------------------------
-    wire misalign_comb = ((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0]);
-    assign ready = ~misalign_comb || ~beat;
+    wire misalign_comb = (((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0])) && (we||rden);
+    assign ready = ~misalign_comb && ~stall;
 
     // -------------------------------------------------------------------------
     //  Byte-enable generation

@@ -40,6 +40,14 @@
         ORR     \reg, \reg, #(\b3 << 24)
     .endm
 
+@ Expected value of a sign-extended NEGATIVE halfword (bit 15 set): the low
+@ 16 bits are \value, the top 16 bits all ones. Used to check LDRSH results.
+    .macro LOADSH reg, value
+        LOADH   \reg, \value
+        ORR     \reg, \reg, #0xFF000000
+        ORR     \reg, \reg, #0x00FF0000
+    .endm
+
     .macro CHECK_EQ code, addr_reg
         MOV     R8, R2
         MOV     R9, R1
@@ -549,6 +557,52 @@ phase_strict_gba:
     MOV     R1, #0xA5
     CHECK_EQ 0x07, R5
 
+@ ---- narrow-port multi-beat LOAD assembly (read side of a wide access) -------
+@ Phases 1-9 only ever read these narrow ports as bytes/halfwords. A full-width
+@ load has to reassemble the value from several beats: gba_ram_w16 builds a word
+@ from {high,low} halfwords, cart_ram a word/halfword from four/two bytes. A
+@ dropped or mis-ordered beat shows up as a corrupted load. Every value keeps a
+@ non-zero high half so a missing upper beat cannot masquerade as a correct zero.
+    MOV     R4, #0x05000000      @ Palette word load (gba_ram_w16 two-beat).
+    ADD     R4, R4, #0x100
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    STR     R1, [R4]
+    LDR     R2, [R4]
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    CHECK_EQ 0x08, R4
+
+    MOV     R4, #0x06000000      @ VRAM word load (gba_ram_w16 two-beat).
+    ADD     R4, R4, #0x100
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    STR     R1, [R4]
+    LDR     R2, [R4]
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    CHECK_EQ 0x09, R4
+
+    MOV     R4, #0x0E000000      @ Cart word load (8-bit four-beat).
+    ADD     R4, R4, #0x100
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    STR     R1, [R4]
+    LDR     R2, [R4]
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    CHECK_EQ 0x0A, R4
+
+    MOV     R4, #0x0E000000      @ Cart halfword load (8-bit two-beat).
+    ADD     R4, R4, #0x110
+    LOADH   R1, 0xBEEF
+    STRH    R1, [R4]
+    LDRH    R2, [R4]
+    LOADH   R1, 0xBEEF
+    CHECK_EQ 0x0B, R4
+
+    MOV     R4, #0x0E000000      @ Cart signed halfword load (8-bit two-beat).
+    ADD     R4, R4, #0x118
+    LOADH   R1, 0x80F0
+    STRH    R1, [R4]
+    LDRSH   R2, [R4]
+    LOADSH  R1, 0x80F0
+    CHECK_EQ 0x0C, R4
+
 @ ==============================================================================
 @ PHASE 9 - multiple (burst) store/read to SDRAM-backed EWRAM
 @ STM/STR-multiple and LDM keep the region enable asserted across consecutive
@@ -601,9 +655,84 @@ phase_sdram_burst:
     LOADH   R1, 0x0DD3
     CHECK_EQ 0x08, R4
 
+@ ==============================================================================
+@ PHASE 10 - explicit word / halfword / byte load+store width & sign coverage
+@ Fills the load-side gaps left by phases 1-9 on paths the RTL claims to support,
+@ so a failure here is a real regression (the strict narrow-port split-load
+@ probes live in phase 8). Three blocks:
+@   WORD     - store 0x89ABCDEF and load it whole; the non-zero high half catches
+@              a stuck-zero or mis-assembled upper word on the SDRAM two-beat
+@              path (phase 9 cannot, its burst values keep the high half zero).
+@   HALFWORD - LDRSH must sign-extend bit 15; only PAL/VRAM tested this before.
+@   BYTE     - LDRSB must sign-extend bit 7 on the SDRAM, 32-bit and 8-bit ports.
+@ All accesses are naturally aligned (a misaligned half/word would stall a
+@ narrow-port FSM without advancing and hang instead of reporting).
+@ ==============================================================================
+phase_ldst_widths:
+    MOV     R7, #10
+
+@ ---- WORD: store 0x89ABCDEF, load it back; both halves must survive ----------
+    MOV     R4, #0x02000000      @ EWRAM word (SDRAM two-beat).
+    ADD     R4, R4, #0x300
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    STR     R1, [R4]
+    LDR     R2, [R4]
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    CHECK_EQ 0x01, R4
+
+    MOV     R4, #0x08000000      @ PAK_ROM word (SDRAM two-beat).
+    ADD     R4, R4, #0x4000
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    STR     R1, [R4]
+    LDR     R2, [R4]
+    LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
+    CHECK_EQ 0x02, R4
+
+@ ---- HALFWORD: signed load-back sign-extends bit 15 -------------------------
+    MOV     R4, #0x02000000      @ EWRAM signed halfword (SDRAM sign-extend).
+    ADD     R4, R4, #0x320
+    LOADH   R1, 0x8123
+    STRH    R1, [R4]
+    LDRSH   R2, [R4]
+    LOADSH  R1, 0x8123
+    CHECK_EQ 0x03, R4
+
+    MOV     R4, #0x03000000      @ IWRAM signed halfword (32-bit port).
+    ADD     R4, R4, #0x200
+    LOADH   R1, 0x8765
+    STRH    R1, [R4]
+    LDRSH   R2, [R4]
+    LOADSH  R1, 0x8765
+    CHECK_EQ 0x04, R4
+
+@ ---- BYTE: signed load-back sign-extends bit 7 ------------------------------
+    MOV     R4, #0x02000000      @ EWRAM signed byte (SDRAM sign-extend).
+    ADD     R4, R4, #0x330
+    MOV     R1, #0x80
+    STRB    R1, [R4]
+    LDRSB   R2, [R4]
+    MVN     R1, #0x7F            @ 0xFFFFFF80
+    CHECK_EQ 0x05, R4
+
+    MOV     R4, #0x03000000      @ IWRAM signed byte (32-bit port).
+    ADD     R4, R4, #0x210
+    MOV     R1, #0x81
+    STRB    R1, [R4]
+    LDRSB   R2, [R4]
+    MVN     R1, #0x7E            @ 0xFFFFFF81
+    CHECK_EQ 0x06, R4
+
+    MOV     R4, #0x0E000000      @ Cart signed byte (8-bit port).
+    ADD     R4, R4, #0x120
+    MOV     R1, #0x82
+    STRB    R1, [R4]
+    LDRSB   R2, [R4]
+    MVN     R1, #0x7D            @ 0xFFFFFF82
+    CHECK_EQ 0x07, R4
+
 all_pass:
-    MOV     R7, #0x0A
-    MOV     R0, #0xAD
+    MOV     R7, #0x0B
+    MOV     R0, #0xBD
     B       all_pass
 
 fail:

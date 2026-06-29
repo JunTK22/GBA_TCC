@@ -30,8 +30,7 @@ module write_data_reg (
     input  wire        nRW,
 
     output reg  [31:0] data_out,
-    output wire        nENOUT,
-    output wire        data_bus_oe
+    output wire        nENOUT
 );
 
     always @(posedge clk or negedge reset_n) begin

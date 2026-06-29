@@ -17,7 +17,7 @@ module palette_ram (
     output wire [31:0] rdata,
     input  wire        we,
     input  wire        rden,
-    input  wire        size,           // 0=byte, 1=halfword
+    input  wire [1:0]  size,           // 0=byte, 1=halfword
     input  wire        sign_extend,
     output wire        ready,
     output wire        misalign_fault

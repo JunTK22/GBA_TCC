@@ -51,6 +51,7 @@ module cart_ram #(
 	reg [1:0] STATE 	 = NORMAL;
 	reg [1:0] NEXT_STATE = NORMAL;
 	reg	[1:0] beat = 2'b0;
+    reg       stall = 0;
 	
 	always @(posedge clk) begin
 		STATE <= NEXT_STATE;
@@ -60,20 +61,28 @@ module cart_ram #(
 		case (STATE)
 			NORMAL: begin
 				beat = 2'b00;
-				if (size != SIZE_BYTE && (rden = 1 || we == 1)) NEXT_STATE = BYTE1;
-				else NEXT_STATE = NORMAL;
+                stall = 0;
+				if (size != SIZE_BYTE && (rden || we)) begin 
+                    stall = 1;
+                    NEXT_STATE = BYTE1;
+                end else NEXT_STATE = NORMAL;
 			end
 			BYTE1: begin
 				beat = 2'b01;
-				if 	 (size == SIZE_HALF) NEXT_STATE = NORMAL;
-				else NEXT_STATE = BYTE2;
+                stall = 1;
+				if (size == SIZE_HALF) begin 
+                    stall = 0;
+                    NEXT_STATE = NORMAL;
+                end else NEXT_STATE = BYTE2;
 			end
 			BYTE2: begin
 				beat = 2'b10;
+                stall = 1;
 				NEXT_STATE = BYTE3;
 			end
 			BYTE3: begin
 				beat = 2'b11;
+                stall = 0;
 				NEXT_STATE = NORMAL;
 			end
 		endcase
@@ -90,8 +99,8 @@ module cart_ram #(
     // -------------------------------------------------------------------------
     //  Alignment check
     // -------------------------------------------------------------------------
-    wire misalign_comb = ((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0]);
-    assign ready = ~misalign_comb || ~(|beat);
+    wire misalign_comb = (((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0])) && (we||rden);
+    assign ready = ~misalign_comb && ~stall;
 
     // -------------------------------------------------------------------------
     //  Write-data alignment
@@ -133,7 +142,6 @@ module cart_ram #(
     // -------------------------------------------------------------------------
 	reg [7:0] read_data_q0, read_data_q1, read_data_q2	= 8'b0;
     reg	[1:0] size_q        = 2'b0;
-    reg       byte_lane_q   = 1'b0;
     reg       sign_extend_q = 1'b0;
     reg       misalign_q    = 1'b0;
     reg       we_q          = 1'b0;
@@ -143,7 +151,6 @@ module cart_ram #(
 		read_data_q1  <= read_data_q0;
 		read_data_q2  <= read_data_q1;
         size_q        <= size;
-        byte_lane_q   <= byte_lane;
         sign_extend_q <= sign_extend;
         misalign_q    <= misalign_comb;
         we_q          <= we;
@@ -155,7 +162,7 @@ module cart_ram #(
     always @(*) begin
         case (size_q)
             SIZE_BYTE: rdata = sign_extend_q ? {{24{read_data[7]}}, read_data} : {24'h0, read_data};
-            SIZE_HALF: rdata = sign_extend_q ? {{16{read_data_q0[15]}}, read_data, read_data_q0} : {16'h0, read_data, read_data_q0};
+            SIZE_HALF: rdata = sign_extend_q ? {{16{read_data[7]}}, read_data, read_data_q0} : {16'h0, read_data, read_data_q0};
             SIZE_WORD: rdata = {read_data, read_data_q0, read_data_q1, read_data_q2};
             default:   rdata = 32'h0;
         endcase

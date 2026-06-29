@@ -46,6 +46,7 @@ module io_registers (
     input  wire [31:0] wdata,
     output reg  [31:0] rdata,
     input  wire        we,
+    input  wire        rden,
     input  wire [1:0]  size,           // 00=byte 01=half 10=word
     input  wire        sign_extend,
     output wire        ready,
@@ -279,9 +280,7 @@ module io_registers (
     wire [8:0] hw_idx_hi = {addr[9:2], 1'b1};
     wire [1:0] byte_lane = addr[1:0];
 
-    wire misalign_comb =
-          (size == 2'b01) ? addr[0] :
-          (size == 2'b10) ? |addr[1:0] : 1'b0;
+    wire misalign_comb = (((size == 2'b01) && addr[0]) || ((size == 2'b10) && |addr[1:0])) && (we||rden);
     assign ready = ~misalign_comb;
 
     reg [3:0] byteena;
@@ -412,8 +411,10 @@ module io_registers (
         sign_extend_q <= sign_extend;
         misalign_q    <= misalign_comb;
         we_q          <= we;
-        hw_idx_lo_q   <= hw_idx_lo;
-        hw_idx_hi_q   <= hw_idx_hi;
+        if (rden) begin
+            hw_idx_lo_q   <= hw_idx_lo;
+            hw_idx_hi_q   <= hw_idx_hi;
+        end
     end
 
     // -------------------------------------------------------------------------

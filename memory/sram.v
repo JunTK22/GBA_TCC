@@ -68,7 +68,7 @@ module sram #(
     // -------------------------------------------------------------------------
     //  Alignment check (combinational)
     // -------------------------------------------------------------------------
-    wire misalign_comb = ((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0]);
+    wire misalign_comb = (((size == SIZE_HALF) && addr[0]) || ((size == SIZE_WORD) && |addr[1:0])) && (we||rden);
     assign ready = ~misalign_comb;
 
     // -------------------------------------------------------------------------
