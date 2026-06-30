@@ -7,10 +7,9 @@
 //  per CowBite §3.
 //
 //  We allocate 128 KB (DEPTH_POW2 = 16) because M10K block sizing is a power
-//  of two; the upper 32 KB is unmapped from the CPU's perspective and the bus
-//  decoder is expected to fold (or reject) accesses to that range.
+//  of two. The wrapper folds addr[16] into the documented 96 KB mirror window.
 //
-//  Zero-initialised by BIOS at startup.
+//  Wraps `gba_ram_w16`, so word accesses are assembled from two 16-bit beats.
 // =============================================================================
 
 `timescale 1ns / 1ps

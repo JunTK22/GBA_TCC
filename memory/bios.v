@@ -3,12 +3,12 @@
 //  GBA System ROM (BIOS) — 16 KB, 32-bit port, read-only.
 //
 //  Memory map: 0x00000000 - 0x00003FFF.
-//  Per CowBite §3 / GBA spec: "executable but not readable".
+//  The current bring-up top uses this as the CPU boot ROM and initializes it
+//  from the top-level `INIT_FILE` parameter.
 //
-//  Thin M10K wrapper. The bus decoder is responsible for byte-lane selection
-//  and for blocking visible reads (returning prefetched instructions instead).
-//  This module simply exposes the raw 32-bit word at a given word address with
-//  one cycle of read latency.
+//  Read-only M10K-backed storage with byte/halfword/word read formatting,
+//  optional sign extension, and combinational alignment-ready reporting.
+//  Misalignment is reported on the registered read qualifier path.
 // =============================================================================
 
 `timescale 1ns / 1ps

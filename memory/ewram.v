@@ -5,7 +5,11 @@
 //  Memory map: 0x02000000 - 0x0203FFFF (mirrored every 0x40000 to 0x02FFFFFF).
 //  Per CowBite §3: general-purpose data/code RAM, 16-bit bus → 32-bit ARM
 //  accesses cost twice as many cycles as IWRAM.
-//  Zero-initialised by BIOS at startup.
+//
+//  This is the legacy local M10K-backed EWRAM wrapper. The current synthesis top
+//  comments it out and routes EWRAM to SDRAM instead. The wrapper preserves the
+//  older 1-bit `size` port and therefore models byte/halfword access only when
+//  used directly.
 // =============================================================================
 
 `timescale 1ns / 1ps

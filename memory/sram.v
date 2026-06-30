@@ -6,7 +6,8 @@
 //  Description:
 //    Single-port synchronous memory targeting Intel/Altera M10K block RAM.
 //    Byte-addressed, 32-bit datapath, supports byte / halfword / word
-//    transfers with optional sign extension. 1-cycle read latency.
+//    transfers with optional sign extension, alignment checking, and ready/fault
+//    outputs. 1-cycle read latency.
 //
 //    This version is structured so Quartus' RAM inference engine recognizes
 //    the memory as a true synchronous block RAM with byte enables. The key

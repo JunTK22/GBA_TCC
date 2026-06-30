@@ -1,21 +1,17 @@
-/**
- *
- *  Very simple host interface
- *     * No burst support
- *     * haddr - address for reading and wriging 16 bits of data
- *     * data_input - data for writing, latched in when wr_enable is highz0
- *     * data_output - data for reading, comes available sometime
- *       *few clocks* after rd_enable and address is presented on bus
- *     * rst_n - start init ram process
- *     * rd_enable - read enable, on clk posedge haddr will be latched in,
- *       after *few clocks* data will be available on the data_output port
- *     * wr_enable - write enable, on clk posedge haddr and data_input will
- *       be latched in, after *few clocks* data will be written to sdram
- *
- * Theory
- *  This simple host interface has a busy signal to tell you when you are
- *  not able to issue commands.
- */
+// =============================================================================
+//  sdram_controller.v
+//  SDRAM clock-domain command engine for the DE1-SoC 16-bit SDRAM.
+//
+//  OpenCores-derived single-clock controller with initialization, periodic
+//  refresh, activate/read/write/precharge sequencing, and a simple host request
+//  interface. The host side presents halfword addresses. Byte writes use DQM via
+//  `byte_mask`; word transfers (`word == 1`) are performed as two sequential
+//  16-bit beats and assembled into `rd_data[31:0]` on reads.
+//
+//  `busy` is asserted while the command FSM owns an active read or write
+//  sequence. `rd_ready` pulses when read data is valid; for word reads this is
+//  after the high halfword is captured.
+// =============================================================================
 
 module sdram_controller (
     /* HOST INTERFACE */

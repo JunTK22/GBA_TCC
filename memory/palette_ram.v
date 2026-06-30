@@ -5,7 +5,10 @@
 //  Memory map: 0x05000000 - 0x050003FF.
 //  Per CowBite §3: 256 16-bit BG palette entries at 0x05000000 +
 //  256 16-bit OBJ palette entries at 0x05000200.
-//  Zero-initialised by BIOS at startup.
+//
+//  Wraps `gba_ram_w16`, so byte/halfword accesses are single-beat and word
+//  accesses are assembled from two 16-bit beats with `ready` deasserted during
+//  the extra beat.
 // =============================================================================
 
 `timescale 1ns / 1ps

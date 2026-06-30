@@ -1,3 +1,13 @@
+// =============================================================================
+//  bus_arbiter.v
+//  Combinational shared-bus master mux.
+//
+//  Selects CPU or DMA0..DMA3 address, write data, access size, and direction.
+//  DMA channels have fixed priority DMA0, DMA1, DMA2, DMA3, then CPU. For DMA,
+//  `wr_en_dma` selects destination address/write phase versus source address/read
+//  phase, and also becomes the bus `nRW` value while any DMA is active.
+// =============================================================================
+
 module bus_arbiter (
     input wire  [31:0] addr_cpu,
     input wire  [31:0] addr_src_dma0, addr_dst_dma0,

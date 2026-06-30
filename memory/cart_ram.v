@@ -6,13 +6,14 @@
 //  Per CowBite §3: 8-bit port, used for save data. Modeled here as on-chip
 //  M10K — battery backing, flash erase semantics, etc. are out of scope.
 //
-//  CPU interface: byte-addressed, byte-only. The CPU bus controller is
-//  responsible for splitting wider accesses into multiple byte transactions
-//  and for any sign-extension after read.
+//  CPU interface is byte-addressed, but this module accepts byte, halfword, and
+//  word `size` encodings. Halfword/word accesses are sequenced internally across
+//  two/four byte beats; `ready` deasserts while those beats are in progress.
+//  Reads are zero/sign-extended according to `sign_extend`.
 //
 //  Read timing:
-//        cycle 0:  addr / we / wdata presented
-//        cycle 1:  rdata valid
+//        byte:       1 M10K read cycle
+//        half/word:  internal multi-beat sequence with `ready` stall
 // =============================================================================
 
 `timescale 1ns / 1ps
