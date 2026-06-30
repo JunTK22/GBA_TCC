@@ -1,3 +1,15 @@
+// =============================================================================
+//  decoder.v
+//  ARM/Thumb instruction decoder and multi-cycle sequencer.
+//
+//  Holds the fetch/decode registers, checks ARM condition codes, decodes ARM and
+//  Thumb instruction classes, and drives the core datapath control signals. The
+//  `cycle_count` / `cycles_types` shift registers sequence multi-cycle loads,
+//  stores, multiplies, branches, block transfers, and exception entry. Active-low
+//  IRQ/FIQ plus ABORT/reset requests are sampled here and converted into the
+//  exception vector sequence consumed by `reg_bank` and `arm7tdmi_top`.
+// =============================================================================
+
 module decoder(
 	input	wire [31:0]	Data_i,
 	input	wire [31:0]	CPSR,
@@ -1006,6 +1018,7 @@ always @(posedge CLK) begin
 					Addr_reg_sel	<= ALU_bus;
 					Bus_A_sel 		<= Rn;
 					Bus_B_sel 		<= Immediate;
+					MAS				<= 2'b10;
 
 					Rd_o			<= instruct_reg[10:8];
 					Rn_o			<= 4'b1111;
@@ -1103,6 +1116,7 @@ always @(posedge CLK) begin
 					Rd_o			<= instruct_reg[10:8];
 					Rn_o			<= 4'b1101; // R13
 					Imm_o			<= {instruct_reg[7:0], 2'b00};
+					Rs_o			<= instruct_reg[10:8];
 				end
 				Load_Addr: begin
 					opcode_o		<= ADD; // Rn + Imm (Offset)
@@ -1335,6 +1349,7 @@ always @(posedge CLK) begin
 				B_shifter_en	<= 0;
 				set_thumb_bit	<= 0;
 				Addr_reg_sel 	<= Incrementer_bus;
+				MAS				<= thumb_state ? 2'b01 : 2'b10;
 			end
 			Branch: begin
 				Link_f			<= 0;
@@ -1490,11 +1505,13 @@ always @(posedge CLK) begin
 				Reg_bank_en		<= 0;
 				set_thumb_bit	<= 0;
 				Addr_reg_sel 	<= Incrementer_bus;
+				MAS				<= thumb_state ? 2'b01 : 2'b10;
 			end
 			Pc_r_L: begin
 				Addr_reg_sel <= PC_bus;
 				if (cycle_count[2:1] == 2'b01) begin
 					opcode_o <= MOV; // Mov Rd <- Data_reg_in
+					MAS		 <= 2'b01;
 					Reg_bank_en <= 1;
 					Addr_reg_sel <= Incrementer_bus;
 					Bus_B_sel <= Data_reg_in;

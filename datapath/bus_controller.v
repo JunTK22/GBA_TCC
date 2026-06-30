@@ -1,4 +1,14 @@
-module bus_controller(	
+// =============================================================================
+//  bus_controller.v
+//  GBA memory-section decoder and read-data mux.
+//
+//  Decodes `rd_addr[27:24]` into region read/write strobes for BIOS, EWRAM,
+//  IWRAM, IO RAM, palette RAM, VRAM, OAM, PAK ROM, and cart RAM. During writes,
+//  `data_o` forwards the active master's `data_main`; during reads, it returns
+//  the selected region's data bus.
+// =============================================================================
+
+module bus_controller(
 	input  wire [31:0]	rd_addr,
 	input  wire 		nRW,
 

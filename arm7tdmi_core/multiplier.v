@@ -1,3 +1,12 @@
+// =============================================================================
+//  multiplier.v
+//  Registered 32x32 -> 64-bit multiplier.
+//
+//  Latches a signed or unsigned product on CLK when `Multiplier_reg_en` is high.
+//  `sign_f == 0` zero-extends operands for unsigned multiply; `sign_f == 1`
+//  sign-extends operands for signed long multiply variants.
+// =============================================================================
+
 module multiplier (
     input wire  [31:0]  data_a,
     input wire  [31:0]  data_b,

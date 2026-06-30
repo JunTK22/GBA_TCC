@@ -23,6 +23,19 @@
 //
 //////////////////////////////////////////////////////////////////////
 
+// =============================================================================
+//  sdram_controller_top.v
+//  CPU-clock to SDRAM-clock wrapper around `sdram_controller`.
+//
+//  Host interface uses a 28-bit byte address, 32-bit data, `MAS` access size,
+//  and CPU `sign_extend`. It remaps EWRAM and PAK ROM apertures into SDRAM
+//  halfword addresses, derives byte masks for subword writes, formats byte and
+//  halfword reads, and requests two SDRAM half-beats for 32-bit word transfers.
+//
+//  Requests cross into the SDRAM clock domain through edge synchronizers plus
+//  held `rd_req`/`wr_req` signals until the core accepts the transaction.
+// =============================================================================
+
 module sdram_controller_top (
     input   wire        clock,        // CPU / core frequency
     input   wire        clock_sdram,  // SDRAM frequency
@@ -106,7 +119,7 @@ wire [7:0]  rd_byte     = rd_lane_r ? rd_data_r2[15:8] : rd_data_r2[7:0];
 wire [31:0] rd_byte_ext = rd_sign_r ? {{24{rd_byte[7]}}, rd_byte} : {24'b0, rd_byte};
 assign rd_data = word_r    ? rd_data_r2
                : rd_byte_r ? rd_byte_ext
-               :             {16'b0, rd_data_r2[15:0]};
+               :             {rd_sign_r ? {16{rd_data_r2[15]}} : 16'b0, rd_data_r2[15:0]};
 
 ///////////////////////////////////////////////////////////////////////
 

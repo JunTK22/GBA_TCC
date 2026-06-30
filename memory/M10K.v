@@ -1,3 +1,12 @@
+// =============================================================================
+//  M10K.v
+//  Thin Intel/Altera `altsyncram` single-port M10K wrapper.
+//
+//  Parameterized width, depth, byte enables, and optional MIF initialization.
+//  Used by the CPU-visible memory-region wrappers so the higher-level modules
+//  can keep their byte/halfword/word formatting outside the vendor primitive.
+// =============================================================================
+
 module M10K #(
     parameter WIDTH      = 32,
     parameter DEPTH_POW2 = 10,

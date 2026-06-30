@@ -1,3 +1,14 @@
+// =============================================================================
+//  arm7tdmi_top.v
+//  Structural top for the ARM7TDMI-class CPU core.
+//
+//  Wires the decoder, register bank, ALU, barrel shifter, multiplier, address
+//  register, incrementer, and write-data register around the ARM external bus
+//  interface. `nWAIT` gates the local CPU clock for external stalls. Exception
+//  entry mode selection is forwarded into the register bank so banked LR/SPSR
+//  writes target the new mode immediately.
+// =============================================================================
+
 module arm7tdmi_top (
     input  wire        MCLK,
     input  wire        reset_n,

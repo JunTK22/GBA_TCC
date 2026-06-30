@@ -1,3 +1,14 @@
+// =============================================================================
+//  dma.v
+//  Single GBA-style DMA channel transfer engine.
+//
+//  Consumes DMAxSAD/DAD/CNT_L/CNT_H register values from `io_registers`, emits
+//  source/destination addresses, transfer size (`MAS`), write-phase flag, active
+//  status, and an active-low completion IRQ. Start timing supports immediate,
+//  VBlank, HBlank, and a VBlank-gated placeholder for special timing. `halt == 1`
+//  freezes the state machine; the synthesis top drives it from `!mem_ready`.
+// =============================================================================
+
 module dma #(
     parameter DMA_Control_Register_Addr = 32'h0400_00BA // DMA0: 0x040000BA | DMA1: 0x040000C6 | DMA2: 0x040000D2 | DMA3: 0x040000DE
 )(

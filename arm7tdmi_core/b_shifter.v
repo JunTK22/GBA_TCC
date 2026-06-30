@@ -1,3 +1,13 @@
+// =============================================================================
+//  b_shifter.v
+//  ARM/Thumb barrel shifter.
+//
+//  Performs immediate rotate-right operands and register/immediate LSL, LSR,
+//  ASR, ROR, and RRX-style special cases. When `B_shifter_en` is low, the input
+//  operand bypasses the shifter; `carry_o` reports the shifter carry-out used by
+//  the ALU flag path.
+// =============================================================================
+
 module b_shifter (
     input  wire [31:0]  data_i,
     input  wire [7:0]   Rs_shift_ammount,

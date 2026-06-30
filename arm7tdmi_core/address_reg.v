@@ -1,3 +1,12 @@
+// =============================================================================
+//  address_reg.v
+//  ARM7TDMI address register.
+//
+//  Selects the next external address from the incrementer, ALU result, PC bus,
+//  or Rn data, and latches it on CLK when `Addr_reg_en` is asserted. The output
+//  `A` is the registered address driven to the shared memory bus.
+// =============================================================================
+
 module address_reg (
     input wire [31:0]   Incrementer,
     input wire [31:0]   ALU,

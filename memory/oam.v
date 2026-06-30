@@ -5,9 +5,9 @@
 //  Memory map: 0x07000000 - 0x070003FF (mirrored every 0x400 to 0x07FFFFFF).
 //  Per CowBite §3 / §6: holds the 128 OBJ attribute entries (8 bytes each)
 //  plus the rotation/scaling matrix entries interleaved between them.
-//  Zero-initialised by BIOS at startup.
 //
-//  32-bit ARM-bus interface inherited from sram.v.
+//  M10K-backed 32-bit ARM-bus wrapper around `sram.v`: byte/half/word access
+//  with optional sign-extension, ready, and misalignment fault reporting.
 // =============================================================================
 
 `timescale 1ns / 1ps

@@ -7,15 +7,15 @@
 //
 //  CPU interface:
 //    addr   — byte address (DEPTH_POW2+1 bits wide).
-//    size   — 0 = byte, 1 = halfword.
-//    The CPU bus controller is responsible for issuing two transactions for
-//    32-bit accesses on this 16-bit port.
+//    size   — 00 = byte, 01 = halfword, 10 = word.
+//    Word accesses are sequenced internally as two 16-bit beats.
 //
 //  Behaviour:
-//    1-cycle read latency. Byte accesses optionally sign-extend to 16 bits.
-//    Halfword accesses must be 2-byte aligned; misaligned halfword sets
-//    misalign_fault on the next cycle (paired with we_q for write faults)
-//    and `ready` deasserts the same cycle.
+//    Byte and halfword accesses have one M10K read cycle. Word accesses deassert
+//    `ready` for the low-half beat, then return the assembled 32-bit value after
+//    the high-half beat. Byte and halfword reads optionally sign-extend.
+//    Misaligned halfword/word accesses deassert `ready` and report
+//    `misalign_fault` on the registered qualifier path.
 //
 //  Implementation follows the same M10K-inferable pattern as sram.v: storage
 //  and the synchronous read register live in the M10K instance, all ARM

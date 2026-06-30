@@ -1,3 +1,11 @@
+// =============================================================================
+//  seg_display.v
+//  Six-digit hexadecimal seven-segment display driver.
+//
+//  Registers a 32-bit debug word and drives HEX0-HEX5 from its low 24 bits.
+//  Segment outputs are active-low for the DE1-SoC seven-segment displays.
+// =============================================================================
+
 module seg_display (
     input   wire [31:0] in,
     input   wire clk,
