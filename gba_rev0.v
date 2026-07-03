@@ -105,7 +105,7 @@ wire pll_lock;
 reg test_clk = 0;
 
 wire clock = clock_cpu;
-wire clock_n = !clock_cpu;
+wire clock_n = clock_cpu_n;
 //assign clock = CLOCK_50;
 //assign clock_n = !CLOCK_50;
 //wire clock = clock_cpu;
@@ -679,6 +679,7 @@ pll  pll(
 	.outclk_0(clock_cpu),       // 17 MHz
 	.outclk_1(clock_sdram),     // 4*17 MHz
 	.outclk_2(clock_sdram_d),   // 4*17 MHz -120°
+	.outclk_3(clock_cpu_n),     // Inverted 17 MHz
 	.locked  (pll_lock)
 );
 
