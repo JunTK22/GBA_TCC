@@ -49,17 +49,11 @@ create_generated_clock -name clk_dram \
       -source {pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk} \
       [get_ports DRAM_CLK]
 
-set_clock_groups -asynchronous \
-      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk test_clk}
-
 # ------------------------------------------------------------------
 # Async inputs / async resets — no real timing relationship.
 # ------------------------------------------------------------------
-set_false_path -from [get_pins {pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|lock}] -to [all_registers]
-set_false_path -from [get_ports {SW[*]}]       -to [all_registers]
-set_false_path -from [get_ports {KEY[*]}]      -to [all_registers]
-#set_false_path -from [get_registers {dma:dma0|data_o[*]}]      -to [get_registers {arm7tdmi_top:arm7tdmi_top|*}]
-#set_false_path -from [get_registers {arm7tdmi_top:arm7tdmi_top|*}]      -to [get_registers {dma:dma0|data_o[*]}]
+set_clock_groups -asynchronous \
+      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk test_clk}
 
 #**************************************************************
 # Set Clock Latency
@@ -78,8 +72,8 @@ derive_clock_uncertainty
 # Set Input Delay
 #**************************************************************
 # Board Delay (Data) + Propagation Delay - Board Delay (Clock)
-#set_input_delay -max -clock clk_dram -0.048 [get_ports DRAM_DQ*]
-#set_input_delay -min -clock clk_dram -0.057 [get_ports DRAM_DQ*]
+set_input_delay -max -clock clk_dram -0.048 [get_ports DRAM_DQ*]
+set_input_delay -min -clock clk_dram -0.057 [get_ports DRAM_DQ*]
 
 
 
@@ -89,24 +83,24 @@ derive_clock_uncertainty
 #**************************************************************
 # max : Board Delay (Data) - Board Delay (Clock) + tsu (External Device)
 # min : Board Delay (Data) - Board Delay (Clock) - th (External Device)
-#set_output_delay -max -clock clk_dram 1.452  [get_ports DRAM_DQ*]
-#set_output_delay -min -clock clk_dram -0.857 [get_ports DRAM_DQ*]
-#set_output_delay -max -clock clk_dram 1.531 [get_ports DRAM_ADDR*]
-#set_output_delay -min -clock clk_dram -0.805 [get_ports DRAM_ADDR*]
-#set_output_delay -max -clock clk_dram 1.533  [get_ports DRAM_*DQM]
-#set_output_delay -min -clock clk_dram -0.805 [get_ports DRAM_*DQM]
-#set_output_delay -max -clock clk_dram 1.510  [get_ports DRAM_BA*]
-#set_output_delay -min -clock clk_dram -0.800 [get_ports DRAM_BA*]
-#set_output_delay -max -clock clk_dram 1.520  [get_ports DRAM_RAS_N]
-#set_output_delay -min -clock clk_dram -0.780 [get_ports DRAM_RAS_N]
-#set_output_delay -max -clock clk_dram 1.5000  [get_ports DRAM_CAS_N]
-#set_output_delay -min -clock clk_dram -0.800 [get_ports DRAM_CAS_N]
-#set_output_delay -max -clock clk_dram 1.545 [get_ports DRAM_WE_N]
-#set_output_delay -min -clock clk_dram -0.755 [get_ports DRAM_WE_N]
-#set_output_delay -max -clock clk_dram 1.496  [get_ports DRAM_CKE]
-#set_output_delay -min -clock clk_dram -0.804 [get_ports DRAM_CKE]
-#set_output_delay -max -clock clk_dram 1.508  [get_ports DRAM_CS_N]
-#set_output_delay -min -clock clk_dram -0.792 [get_ports DRAM_CS_N]
+set_output_delay -max -clock clk_dram 1.452  [get_ports DRAM_DQ*]
+set_output_delay -min -clock clk_dram -0.857 [get_ports DRAM_DQ*]
+set_output_delay -max -clock clk_dram 1.531 [get_ports DRAM_ADDR*]
+set_output_delay -min -clock clk_dram -0.805 [get_ports DRAM_ADDR*]
+set_output_delay -max -clock clk_dram 1.533  [get_ports DRAM_*DQM]
+set_output_delay -min -clock clk_dram -0.805 [get_ports DRAM_*DQM]
+set_output_delay -max -clock clk_dram 1.510  [get_ports DRAM_BA*]
+set_output_delay -min -clock clk_dram -0.800 [get_ports DRAM_BA*]
+set_output_delay -max -clock clk_dram 1.520  [get_ports DRAM_RAS_N]
+set_output_delay -min -clock clk_dram -0.780 [get_ports DRAM_RAS_N]
+set_output_delay -max -clock clk_dram 1.5000  [get_ports DRAM_CAS_N]
+set_output_delay -min -clock clk_dram -0.800 [get_ports DRAM_CAS_N]
+set_output_delay -max -clock clk_dram 1.545 [get_ports DRAM_WE_N]
+set_output_delay -min -clock clk_dram -0.755 [get_ports DRAM_WE_N]
+set_output_delay -max -clock clk_dram 1.496  [get_ports DRAM_CKE]
+set_output_delay -min -clock clk_dram -0.804 [get_ports DRAM_CKE]
+set_output_delay -max -clock clk_dram 1.508  [get_ports DRAM_CS_N]
+set_output_delay -min -clock clk_dram -0.792 [get_ports DRAM_CS_N]
 
 set_output_delay -max -clock clk_vga 0.220 [get_ports VGA_R*]
 set_output_delay -min -clock clk_vga -1.506 [get_ports VGA_R*]
@@ -129,14 +123,28 @@ set_output_delay -min -clock clk_vga -1.485 [get_ports VGA_BLANK]
 #**************************************************************
 # Set False Path
 #**************************************************************
+set_false_path -from [get_pins {pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|lock}] -to [all_registers]
+set_false_path -from [get_ports {SW[*]}]       -to [all_registers]
+set_false_path -from [get_ports {KEY[*]}]      -to [all_registers]
 
-
+set hex_ports [get_ports {HEX0[*] HEX1[*] HEX2[*] HEX3[*] HEX4[*] HEX5[*]}]
+set_false_path -to $hex_ports
+set_false_path -to [get_ports {LEDR[*]}]
+#set_false_path -from [get_registers {dma:dma0|data_o[*]}]      -to [get_registers {arm7tdmi_top:arm7tdmi_top|*}]
+#set_false_path -from [get_registers {arm7tdmi_top:arm7tdmi_top|*}]      -to [get_registers {dma:dma0|data_o[*]}]
 
 #**************************************************************
 # Set Multicycle Path
 #**************************************************************
+set sdram_rd_regs [get_registers {*sdram_controlleri|rd_data_r[*]}]
 
+set_multicycle_path -setup 2 \
+      -from [get_ports DRAM_DQ*] \
+      -to $sdram_rd_regs
 
+set_multicycle_path -hold 1 \
+      -from [get_ports DRAM_DQ*] \
+      -to $sdram_rd_regs
 
 #**************************************************************
 # Set Maximum Delay
