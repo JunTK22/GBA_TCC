@@ -735,7 +735,7 @@ pll  pll(
 //		.acq_clk        (clock)         // acq_clk.clk
 //);
 
-assign nrst = KEY[0] & pll_lock;
+assign nrst = KEY[0];
 assign tap_en = SW[9];
 assign LEDR[0] = clock;
 assign LEDR[1] = !(CPSR[7] || CPSR[6]);

@@ -35,10 +35,10 @@ set_output_delay -clock altera_reserved_tck 3 [get_ports altera_reserved_tdo]
 #**************************************************************
 derive_pll_clocks
 
-create_generated_clock -name test_clk \
-      -source {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk} \
-      -divide_by 1 \
-      [get_registers test_clk]
+#create_generated_clock -name test_clk \
+#      -source {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk} \
+#      -divide_by 1 \
+#      [get_registers test_clk]
 
 #create_generated_clock -name clock_n \
 #      -source test_clk \
@@ -48,12 +48,6 @@ create_generated_clock -name test_clk \
 create_generated_clock -name clk_dram \
       -source {pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk} \
       [get_ports DRAM_CLK]
-
-# ------------------------------------------------------------------
-# Async inputs / async resets — no real timing relationship.
-# ------------------------------------------------------------------
-set_clock_groups -asynchronous \
-      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk test_clk}
 
 #**************************************************************
 # Set Clock Latency
@@ -118,7 +112,20 @@ set_output_delay -min -clock clk_vga -1.485 [get_ports VGA_BLANK]
 # Set Clock Groups
 #**************************************************************
 
+set_clock_groups -asynchronous \
+      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk test_clk}
 
+#set_clock_groups -asynchronous \
+#      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk pll|pll_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk}
+#
+#set_clock_groups -asynchronous \
+#      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk}
+#
+#set_clock_groups -asynchronous \
+#      -group {pll|pll_inst|altera_pll_i|general[3].gpll~PLL_OUTPUT_COUNTER|divclk pll|pll_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk}
+#
+#set_clock_groups -asynchronous \
+#      -group {pll|pll_inst|altera_pll_i|general[3].gpll~PLL_OUTPUT_COUNTER|divclk pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk}
 
 #**************************************************************
 # Set False Path
@@ -132,6 +139,13 @@ set_false_path -to $hex_ports
 set_false_path -to [get_ports {LEDR[*]}]
 #set_false_path -from [get_registers {dma:dma0|data_o[*]}]      -to [get_registers {arm7tdmi_top:arm7tdmi_top|*}]
 #set_false_path -from [get_registers {arm7tdmi_top:arm7tdmi_top|*}]      -to [get_registers {dma:dma0|data_o[*]}]
+
+set mem_poins [get_pins -compatibility_mode {bios* iwram* palette_ram* vram* oam* cart_ram* io_registers*}]
+set_false_path -from [get_pins -compatibility_mode sdram_controller*] -to $mem_poins
+
+set_false_path -from [get_registers {sdram_controller_top:sdram_controller|rd_data_r2[*]}] -to [get_registers {sdram_controller_top:sdram_controller|wr_data_r[*]}]
+
+set_false_path -from [get_registers {*done*}] -to [get_registers {nWAIT}]
 
 #**************************************************************
 # Set Multicycle Path
