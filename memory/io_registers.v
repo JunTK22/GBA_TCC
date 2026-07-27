@@ -1,14 +1,14 @@
 // =============================================================================
 //  io_registers.v
-//  GBA memory-mapped IO register file — 1 KB, 32-bit dual-ported in spec
-//  (modelled here as a single CPU-side port; downstream hardware reads named
-//  outputs combinationally).
+//  GBA memory-mapped IO register file for 0x04000000-0x040003FF.
 //
-//  Memory map: 0x04000000 - 0x040003FF.
+//  The CPU/DMA port is byte addressed and 32 bits wide. Register storage uses
+//  16-bit `regs[hw_idx]` entries; named DMA, PPU, interrupt, serial, and sound
+//  outputs are combinational views of those entries. Reads are registered with
+//  one cycle of latency, matching the other local bus regions.
 //
-//  Register set follows CowBite §10 / gba.h. Each 16-bit halfword in the IO
-//  space lives in `regs[hw_idx]`; named outputs are combinational views of
-//  those flops. Five categories need special semantics:
+//  The register set follows CowBite section 10 / gba.h. These categories need
+//  special semantics:
 //
 //    1.  Read-only, hardware-driven:
 //          VCOUNT (0x006), KEY (0x130).
@@ -31,8 +31,9 @@
 //          Halfword (size=01) requires addr[0]=0; word (size=10) requires
 //          addr[1:0]=00. Misalign sets `misalign_fault` and gates `we`.
 //
-//  Read latency: 1 cycle (registered output), matching the M10K-backed
-//  memories so the CPU bus controller can treat all regions uniformly.
+//    6.  Affine reference reload:
+//          A write to either half of BG2X/BG2Y/BG3X/BG3Y emits a one-cycle
+//          `write_aff_*_o` pulse so the PPU reloads its internal reference.
 // =============================================================================
 
 `timescale 1ns / 1ps
@@ -87,6 +88,8 @@ module io_registers (
     output wire [15:0] bg3pa_o, bg3pb_o, bg3pc_o, bg3pd_o,
     output wire [31:0] bg2x_o, bg2y_o,
     output wire [31:0] bg3x_o, bg3y_o,
+    output reg  [1:0]  write_aff_x_o,
+    output reg  [1:0]  write_aff_y_o,
 
     // ---------------- Window ----------------
     output wire [15:0] win0h_o, win1h_o, win0v_o, win1v_o,
@@ -370,6 +373,15 @@ module io_registers (
     wire commit_lo = write_en && |byteena[1:0] && !is_special_hw(hw_idx_lo);
     wire commit_hi = write_en && |byteena[3:2] && !is_special_hw(hw_idx_hi);
 
+    wire writes_bg2x = (commit_lo && (hw_idx_lo == HW_BG2X_L))
+                    || (commit_hi && (hw_idx_hi == HW_BG2X_H));
+    wire writes_bg2y = (commit_lo && (hw_idx_lo == HW_BG2Y_L))
+                    || (commit_hi && (hw_idx_hi == HW_BG2Y_H));
+    wire writes_bg3x = (commit_lo && (hw_idx_lo == HW_BG3X_L))
+                    || (commit_hi && (hw_idx_hi == HW_BG3X_H));
+    wire writes_bg3y = (commit_lo && (hw_idx_lo == HW_BG3Y_L))
+                    || (commit_hi && (hw_idx_hi == HW_BG3Y_H));
+
     always @(posedge clk) begin
         if (commit_lo) begin
             if (we_lo_b0) regs[hw_idx_lo][7:0]  <= wdata_shifted[7:0];
@@ -378,6 +390,18 @@ module io_registers (
         if (commit_hi) begin
             if (we_hi_b0) regs[hw_idx_hi][7:0]  <= wdata_shifted[23:16];
             if (we_hi_b1) regs[hw_idx_hi][15:8] <= wdata_shifted[31:24];
+        end
+    end
+
+    // A write to either half of an affine reference reloads the PPU's
+    // corresponding internal reference point.
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            write_aff_x_o <= 2'b00;
+            write_aff_y_o <= 2'b00;
+        end else begin
+            write_aff_x_o <= {writes_bg3x, writes_bg2x};
+            write_aff_y_o <= {writes_bg3y, writes_bg2y};
         end
     end
 

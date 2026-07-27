@@ -1,20 +1,22 @@
 // =============================================================================
 //  oam.v
-//  Object Attribute Memory (OAM) — 1 KB, 32-bit port.
+//  1 KiB, single-port Object Attribute Memory with CPU/DMA/PPU arbitration.
 //
-//  Memory map: 0x07000000 - 0x070003FF (mirrored every 0x400 to 0x07FFFFFF).
-//  Per CowBite §3 / §6: holds the 128 OBJ attribute entries (8 bytes each)
-//  plus the rotation/scaling matrix entries interleaved between them.
+//  The CPU/DMA port is byte addressed; the PPU port uses 32-bit word indices.
+//  An active PPU read has priority unless force blank is asserted. A colliding
+//  CPU/DMA request holds `ready` low and is retried through the shared nWAIT
+//  path. PPU-only traffic does not stall that global ready chain.
 //
-//  M10K-backed 32-bit ARM-bus wrapper around `sram.v`: byte/half/word access
-//  with optional sign-extension, ready, and misalignment fault reporting.
+//  Reads are synchronous. GBA OAM permits 8/16/32-bit reads and 16/32-bit
+//  writes; byte writes complete without changing memory.
 // =============================================================================
 
 `timescale 1ns / 1ps
 
 module oam (
     input  wire        clk,
-    input  wire [9:0]  addr,            // 1 KB byte address
+
+    input  wire [9:0]  addr,
     input  wire [31:0] wdata,
     output wire [31:0] rdata,
     input  wire        we,
@@ -22,23 +24,56 @@ module oam (
     input  wire [1:0]  size,
     input  wire        sign_extend,
     output wire        ready,
-    output wire        misalign_fault
+    output wire        misalign_fault,
+
+    input  wire [7:0]  ppu_addr,
+    input  wire        ppu_rden,
+    output wire [31:0] ppu_rdata,
+    input  wire        force_blank
 );
 
+    localparam [1:0] SIZE_BYTE = 2'b00;
+    localparam [1:0] SIZE_WORD = 2'b10;
+
+    wire cpu_request = we || rden;
+    wire ppu_request = ppu_rden && !force_blank;
+    wire cpu_grant = cpu_request && !ppu_request;
+
+    wire [9:0] mem_addr =
+        ppu_request ? {ppu_addr, 2'b00} : addr;
+    wire [1:0] mem_size =
+        ppu_request ? SIZE_WORD : size;
+    wire mem_we =
+        cpu_grant && we && (size != SIZE_BYTE);
+    wire mem_rden =
+        ppu_request || (cpu_grant && rden);
+
+    wire [31:0] mem_rdata;
+    wire mem_ready;
+    wire mem_misalign_fault;
+
     sram #(
-        .DEPTH_POW2 (8),                 // 2^8 = 256 words = 1 KB
+        .DEPTH_POW2 (8),
         .INIT_FILE  ("UNUSED")
     ) oam_mem (
         .clk            (clk),
-        .addr           (addr),
+        .addr           (mem_addr),
         .wdata          (wdata),
-        .rdata          (rdata),
-        .we             (we),
-        .rden           (rden),
-        .size           (size),
-        .sign_extend    (sign_extend),
-        .ready          (ready),
-        .misalign_fault (misalign_fault)
+        .rdata          (mem_rdata),
+        .we             (mem_we),
+        .rden           (mem_rden),
+        .size           (mem_size),
+        .sign_extend    (ppu_request ? 1'b0 : sign_extend),
+        .ready          (mem_ready),
+        .misalign_fault (mem_misalign_fault)
     );
+
+    assign rdata = mem_rdata;
+    assign ppu_rdata = mem_rdata;
+
+    // PPU-only traffic must not stall the global CPU/DMA ready chain.
+    assign ready =
+        !cpu_request || (!ppu_request && mem_ready);
+    assign misalign_fault = mem_misalign_fault;
 
 endmodule
