@@ -112,9 +112,6 @@ set_output_delay -min -clock clk_vga -1.485 [get_ports VGA_BLANK]
 # Set Clock Groups
 #**************************************************************
 
-set_clock_groups -asynchronous \
-      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk test_clk}
-
 #set_clock_groups -asynchronous \
 #      -group {pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk pll|pll_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk}
 #

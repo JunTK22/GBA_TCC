@@ -2,19 +2,21 @@
 //  gba_rev0.v
 //  DE1-SoC synthesis top for the ARM7TDMI/GBA bring-up system.
 //
-//  Active datapath:
-//      ARM7TDMI + DMA0..3 -> bus_arbiter -> bus_controller
-//      -> BIOS/IWRAM/IO/Palette/VRAM/OAM/Cart RAM and SDRAM-backed EWRAM/PAK ROM.
+//  Active system paths:
+//      ARM7TDMI + DMA0..3 -> bus_arbiter -> bus_controller -> memory regions
+//      IO register controls -> PPU -> VRAM/OAM/palette fetch ports
 //
-//  The CPU runs from a PLL-derived debug clock (`test_clk`), while local memory
-//  and the SDRAM host wrapper use the inverse clock (`clock_n`) for the current
-//  synchronous-read timing convention. `mem_ready` releases CPU nWAIT and holds
-//  DMA state machines through `.halt(!mem_ready)` while SDRAM or local regions
-//  are not ready.
+//  The CPU, DMA engines, and PPU use the 17 MHz PLL `clock_cpu` output. Local
+//  memories, the IO register file, and the SDRAM host wrapper use the dedicated
+//  inverse output, `clock_cpu_n`, for the synchronous-read timing convention.
+//  `mem_ready` releases CPU nWAIT and holds DMA through `.halt(!mem_ready)`.
 //
-//  SDRAM access size and sign-extension controls are sourced from the active
-//  master bus (`MAS`, `sign_extend`). VBlank/HBlank DMA timing is manual switch
-//  stimulus (`SW[1]`/`SW[2]`) until a PPU timing source is integrated.
+//  The PPU drives DISPSTAT/VCOUNT state, video IRQ requests, and VBlank/HBlank
+//  DMA start events. Its rendered pixel and blanking outputs are not yet routed
+//  to the board VGA pins.
+//
+//  SDRAM access size and sign-extension controls come from the active master
+//  bus (`MAS`, `sign_extend`).
 // =============================================================================
 
 module gba_rev0(
@@ -99,6 +101,7 @@ parameter INIT_FILE  = "code/assembly_code/thumb_memory_test.mif";
 //=======================================================
 
 wire clock_cpu;
+wire clock_cpu_n;
 wire clock_sdram;
 wire clock_sdram_d;
 wire pll_lock;
@@ -208,34 +211,73 @@ wire [1:0] MAS_dma1;
 wire [1:0] MAS_dma2;
 wire [1:0] MAS_dma3;
 
-// DMA completion pulses are latched by IF. The CPU sees an active-low IRQ only
-// when the corresponding IE bit and IME are enabled; KEY[1] remains a direct,
-// active-low external IRQ source.
+// PPU register values from io_registers. These are written on clock_n and are
+// stable for half a CPU cycle before the PPU samples them on clock.
+wire [15:0] ppu_dispcnt;
+wire [15:0] ppu_dispstat;
+wire [15:0] ppu_bg0cnt, ppu_bg1cnt, ppu_bg2cnt, ppu_bg3cnt;
+wire [15:0] ppu_bg0hofs, ppu_bg0vofs;
+wire [15:0] ppu_bg1hofs, ppu_bg1vofs;
+wire [15:0] ppu_bg2hofs, ppu_bg2vofs;
+wire [15:0] ppu_bg3hofs, ppu_bg3vofs;
+wire [15:0] ppu_bg2pa, ppu_bg2pb, ppu_bg2pc, ppu_bg2pd;
+wire [15:0] ppu_bg3pa, ppu_bg3pb, ppu_bg3pc, ppu_bg3pd;
+wire [31:0] ppu_bg2x, ppu_bg2y, ppu_bg3x, ppu_bg3y;
+wire [1:0]  ppu_write_aff_x, ppu_write_aff_y;
+wire [15:0] ppu_win0h, ppu_win1h, ppu_win0v, ppu_win1v;
+wire [15:0] ppu_winin, ppu_winout;
+wire [31:0] ppu_mosaic;
+wire [15:0] ppu_bldmod, ppu_colev, ppu_coley;
+
+wire        ppu_bg_vram_read;
+wire [16:0] ppu_bg_vram_address;
+wire [15:0] ppu_bg_vram_read_data;
+wire        ppu_obj_vram_read;
+wire [14:0] ppu_obj_vram_address;
+wire [15:0] ppu_obj_vram_read_data;
+wire        ppu_oam_read;
+wire [7:0]  ppu_oam_address;
+wire [31:0] ppu_oam_read_data;
+wire        ppu_palette_read;
+wire [8:0]  ppu_palette_address;
+wire [15:0] ppu_palette_read_data;
+wire [10:0] ppu_tick;
+wire [7:0]  ppu_scanline;
+
+wire ppu_vblank_status = (ppu_scanline >= 8'd160)
+                       && (ppu_scanline <= 8'd226);
+wire ppu_hblank_status = ppu_tick >= 11'd1006;
+wire ppu_vcount_match = ppu_scanline == ppu_dispstat[15:8];
+wire ppu_vblank_start = (ppu_tick == 11'd0)
+                      && (ppu_scanline == 8'd160);
+wire ppu_hblank_start = (ppu_tick == 11'd1006)
+                      && (ppu_scanline < 8'd160);
+
+reg ppu_vcount_match_q;
+reg ppu_vcount_irq;
+always @(posedge clock) begin
+    if (!nrst) begin
+        ppu_vcount_match_q <= 1'b0;
+        ppu_vcount_irq <= 1'b0;
+    end else begin
+        ppu_vcount_match_q <= ppu_vcount_match;
+        ppu_vcount_irq <= ppu_vcount_match && !ppu_vcount_match_q;
+    end
+end
+
+// PPU and DMA event pulses are latched by IF. The CPU sees an active-low IRQ
+// only when the corresponding IE bit and IME are enabled; KEY[1] remains a
+// direct, active-low external IRQ source.
 wire [15:0] ie_reg;
 wire [15:0] if_reg;
 wire [15:0] ime_reg;
 wire [13:0] irq_request = {2'b00, ~nirq_dma3, ~nirq_dma2,
-                            ~nirq_dma1, ~nirq_dma0, 8'b0};
+                            ~nirq_dma1, ~nirq_dma0, 5'b00000,
+                            ppu_vcount_irq && ppu_dispstat[5],
+                            ppu_hblank_start && ppu_dispstat[4],
+                            ppu_vblank_start && ppu_dispstat[3]};
 wire        irq_pending = ime_reg[0] && |(ie_reg & if_reg);
 wire        nIRQ = KEY[1] && !irq_pending;
-
-wire vblank_i = SW[1];
-wire hblank_i = SW[2];
-
-reg vblank_s0, vblank_s1, vblank_s2;
-reg hblank_s0, hblank_s1, hblank_s2;
-
-wire vblank = !vblank_s2 && vblank_s1;
-wire hblank = !hblank_s2 && hblank_s1;
-
-always @(posedge clock) begin
-    vblank_s0 <= vblank_i;
-    hblank_s0 <= hblank_i;
-    vblank_s1 <= vblank_s0;
-    hblank_s1 <= hblank_s0;
-    vblank_s2 <= vblank_s1;
-    hblank_s2 <= hblank_s1;
-end
 
 ///////////////////////////////////////
 
@@ -440,7 +482,11 @@ palette_ram palette_ram (
     .size	(MAS),           // 0=byte, 1=halfword
     .sign_extend (sign_extend),
     .ready	(ready_mem[1]),
-    .misalign_fault	()
+    .misalign_fault	(),
+    .ppu_addr   (ppu_palette_address),
+    .ppu_rden   (ppu_palette_read),
+    .ppu_rdata  (ppu_palette_read_data),
+    .force_blank (ppu_dispcnt[7])
 );
 
 vram vram (
@@ -453,7 +499,15 @@ vram vram (
     .size	(MAS),           // 0=byte, 1=halfword
     .sign_extend (sign_extend),
     .ready	(ready_mem[2]),
-    .misalign_fault	()
+    .misalign_fault	(),
+    .bg_addr    (ppu_bg_vram_address),
+    .bg_rdata   (ppu_bg_vram_read_data),
+    .bg_rden    (ppu_bg_vram_read),
+    .obj_addr   (ppu_obj_vram_address),
+    .obj_rdata  (ppu_obj_vram_read_data),
+    .obj_rden   (ppu_obj_vram_read),
+    .bg_mode    (ppu_dispcnt[2:0]),
+    .force_blank (ppu_dispcnt[7])
 );
 
 oam oam (
@@ -466,7 +520,11 @@ oam oam (
     .size	(MAS),
     .sign_extend (sign_extend),
     .ready	(ready_mem[3]),
-    .misalign_fault	()
+    .misalign_fault	(),
+    .ppu_addr   (ppu_oam_address),
+    .ppu_rden   (ppu_oam_read),
+    .ppu_rdata  (ppu_oam_read_data),
+    .force_blank (ppu_dispcnt[7])
 );
 
 cart_ram cart_ram (
@@ -496,11 +554,10 @@ io_registers io_registers (
     .ready	(ready_mem[5]),
     .misalign_fault	(),
     //---------------- Hardware-driven read fields ----------------
-    //  No PPU/keypad/serial hardware wired yet — tie to idle defaults.
-    .vcount_i	(16'd0),       // REG_VCOUNT (only low 8 bits meaningful)
-    .vblank_status_i (1'b0),   // DISPSTAT bit 0 (W)
-    .hblank_status_i (1'b0),   // DISPSTAT bit 1 (G)
-    .vcount_match_i  (1'b0),   // DISPSTAT bit 2 (Z)
+    .vcount_i	({8'd0, ppu_scanline}),
+    .vblank_status_i (ppu_vblank_status),
+    .hblank_status_i (ppu_hblank_status),
+    .vcount_match_i  (ppu_vcount_match),
     .keypad_i	(16'h03FF),    // REG_KEY (active low) — all keys released
     .irq_request_i (irq_request),
     .sound_status_i (4'd0),    // SOUNDCNT_X bits 0-3
@@ -517,24 +574,32 @@ io_registers io_registers (
     .fifo_a_data_o	(),
     .fifo_b_data_o	(),
     //---------------- Display ----------------
-    .dispcnt_o	(),
-    .dispstat_o	(),
+    .dispcnt_o	(ppu_dispcnt),
+    .dispstat_o	(ppu_dispstat),
     //---------------- Backgrounds ----------------
-    .bg0cnt_o (), .bg1cnt_o (), .bg2cnt_o (), .bg3cnt_o (),
-    .bg0hofs_o (), .bg0vofs_o (),
-    .bg1hofs_o (), .bg1vofs_o (),
-    .bg2hofs_o (), .bg2vofs_o (),
-    .bg3hofs_o (), .bg3vofs_o (),
-    .bg2pa_o (), .bg2pb_o (), .bg2pc_o (), .bg2pd_o (),
-    .bg3pa_o (), .bg3pb_o (), .bg3pc_o (), .bg3pd_o (),
-    .bg2x_o (), .bg2y_o (),
-    .bg3x_o (), .bg3y_o (),
+    .bg0cnt_o (ppu_bg0cnt), .bg1cnt_o (ppu_bg1cnt),
+    .bg2cnt_o (ppu_bg2cnt), .bg3cnt_o (ppu_bg3cnt),
+    .bg0hofs_o (ppu_bg0hofs), .bg0vofs_o (ppu_bg0vofs),
+    .bg1hofs_o (ppu_bg1hofs), .bg1vofs_o (ppu_bg1vofs),
+    .bg2hofs_o (ppu_bg2hofs), .bg2vofs_o (ppu_bg2vofs),
+    .bg3hofs_o (ppu_bg3hofs), .bg3vofs_o (ppu_bg3vofs),
+    .bg2pa_o (ppu_bg2pa), .bg2pb_o (ppu_bg2pb),
+    .bg2pc_o (ppu_bg2pc), .bg2pd_o (ppu_bg2pd),
+    .bg3pa_o (ppu_bg3pa), .bg3pb_o (ppu_bg3pb),
+    .bg3pc_o (ppu_bg3pc), .bg3pd_o (ppu_bg3pd),
+    .bg2x_o (ppu_bg2x), .bg2y_o (ppu_bg2y),
+    .bg3x_o (ppu_bg3x), .bg3y_o (ppu_bg3y),
+    .write_aff_x_o (ppu_write_aff_x),
+    .write_aff_y_o (ppu_write_aff_y),
     //---------------- Window ----------------
-    .win0h_o (), .win1h_o (), .win0v_o (), .win1v_o (),
-    .winin_o (), .winout_o (),
+    .win0h_o (ppu_win0h), .win1h_o (ppu_win1h),
+    .win0v_o (ppu_win0v), .win1v_o (ppu_win1v),
+    .winin_o (ppu_winin), .winout_o (ppu_winout),
     //---------------- Effects ----------------
-    .mosaic_o	(),
-    .bldmod_o (), .colev_o (), .coley_o (),
+    .mosaic_o	(ppu_mosaic),
+    .bldmod_o (ppu_bldmod),
+    .colev_o (ppu_colev),
+    .coley_o (ppu_coley),
     //---------------- Sound (master only — channel regs read via CPU) ----------------
     .soundcnt_l_o (), .soundcnt_h_o (), .soundcnt_x_o (), .soundbias_o (),
     //---------------- DMA ----------------
@@ -576,6 +641,90 @@ io_registers io_registers (
     .ime_o		(ime_reg)
 );
 
+ppu ppu (
+    .clock                  (clock),
+    .reset                  (!nrst),
+    .enable                 (1'b1),
+    .display_mode           (ppu_dispcnt[2:0]),
+    .display_frame          (ppu_dispcnt[4]),
+    .display_force_blank    (ppu_dispcnt[7]),
+    .display_enable_obj     (ppu_dispcnt[12]),
+    .display_enable_bg      (ppu_dispcnt[11:8]),
+    .display_window         (ppu_dispcnt[14:13]),
+    .display_obj_window     (ppu_dispcnt[15]),
+    .display_obj_mapping    (ppu_dispcnt[6]),
+    .display_hblank_free    (ppu_dispcnt[5]),
+    .bg_size                ({ppu_bg3cnt[15:14], ppu_bg2cnt[15:14],
+                              ppu_bg1cnt[15:14], ppu_bg0cnt[15:14]}),
+    .bg_affine_wrap         ({ppu_bg3cnt[13], ppu_bg2cnt[13], 2'b00}),
+    .bg_screen_base         ({ppu_bg3cnt[12:8], ppu_bg2cnt[12:8],
+                              ppu_bg1cnt[12:8], ppu_bg0cnt[12:8]}),
+    .bg_bpp8                ({ppu_bg3cnt[7], ppu_bg2cnt[7],
+                              ppu_bg1cnt[7], ppu_bg0cnt[7]}),
+    .bg_mosaic              ({ppu_bg3cnt[6], ppu_bg2cnt[6],
+                              ppu_bg1cnt[6], ppu_bg0cnt[6]}),
+    .bg_char_base           ({ppu_bg3cnt[3:2], ppu_bg2cnt[3:2],
+                              ppu_bg1cnt[3:2], ppu_bg0cnt[3:2]}),
+    .bg_priority            ({ppu_bg3cnt[1:0], ppu_bg2cnt[1:0],
+                              ppu_bg1cnt[1:0], ppu_bg0cnt[1:0]}),
+    .bg_off_x               ({ppu_bg3hofs, ppu_bg2hofs,
+                              ppu_bg1hofs, ppu_bg0hofs}),
+    .bg_off_y               ({ppu_bg3vofs, ppu_bg2vofs,
+                              ppu_bg1vofs, ppu_bg0vofs}),
+    .bg_aff_pa              ({ppu_bg3pa, ppu_bg2pa}),
+    .bg_aff_pb              ({ppu_bg3pb, ppu_bg2pb}),
+    .bg_aff_pc              ({ppu_bg3pc, ppu_bg2pc}),
+    .bg_aff_pd              ({ppu_bg3pd, ppu_bg2pd}),
+    .bg_aff_x               ({ppu_bg3x[27:0], ppu_bg2x[27:0]}),
+    .bg_aff_y               ({ppu_bg3y[27:0], ppu_bg2y[27:0]}),
+    .write_aff_x            (ppu_write_aff_x),
+    .write_aff_y            (ppu_write_aff_y),
+    .mosaic_bg_x            (ppu_mosaic[3:0]),
+    .mosaic_bg_y            (ppu_mosaic[7:4]),
+    .mosaic_obj_x           (ppu_mosaic[11:8]),
+    .mosaic_obj_y           (ppu_mosaic[15:12]),
+    .win0_x_start           (ppu_win0h[15:8]),
+    .win0_x_end             (ppu_win0h[7:0]),
+    .win0_y_start           (ppu_win0v[15:8]),
+    .win0_y_end             (ppu_win0v[7:0]),
+    .win1_x_start           (ppu_win1h[15:8]),
+    .win1_x_end             (ppu_win1h[7:0]),
+    .win1_y_start           (ppu_win1v[15:8]),
+    .win1_y_end             (ppu_win1v[7:0]),
+    .win0_control           (ppu_winin[5:0]),
+    .win1_control           (ppu_winin[13:8]),
+    .win_out_control        (ppu_winout[5:0]),
+    .win_obj_control        (ppu_winout[13:8]),
+    .blend_effect           (ppu_bldmod[7:6]),
+    .blend_top_bg           (ppu_bldmod[3:0]),
+    .blend_top_obj          (ppu_bldmod[4]),
+    .blend_top_backdrop     (ppu_bldmod[5]),
+    .blend_bottom_bg        (ppu_bldmod[11:8]),
+    .blend_bottom_obj       (ppu_bldmod[12]),
+    .blend_bottom_backdrop  (ppu_bldmod[13]),
+    .blend_alpha_a          (ppu_colev[4:0]),
+    .blend_alpha_b          (ppu_colev[12:8]),
+    .blend_fade             (ppu_coley[4:0]),
+    .bg_vram_read           (ppu_bg_vram_read),
+    .bg_vram_address        (ppu_bg_vram_address),
+    .bg_vram_read_data      (ppu_bg_vram_read_data),
+    .obj_vram_read          (ppu_obj_vram_read),
+    .obj_vram_address       (ppu_obj_vram_address),
+    .obj_vram_read_data     (ppu_obj_vram_read_data),
+    .oam_read               (ppu_oam_read),
+    .oam_address            (ppu_oam_address),
+    .oam_read_data          (ppu_oam_read_data),
+    .palette_read           (ppu_palette_read),
+    .palette_address        (ppu_palette_address),
+    .palette_read_data      (ppu_palette_read_data),
+    .output_valid           (),
+    .output_pixel           (),
+    .output_hblank          (),
+    .output_vblank          (),
+    .tick                   (ppu_tick),
+    .scanline               (ppu_scanline)
+);
+
 // DMA0: 0x040000BA | DMA1: 0x040000C6 | DMA2: 0x040000D2 | DMA3: 0x040000DE
 // DMA0 channel
 dma #(.DMA_Control_Register_Addr (32'h0400_00BA)) dma0 (
@@ -585,8 +734,8 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00BA)) dma0 (
     .dmacnt_l_o (dma0cnt_l_o),
     .dmacnt_h_o (dma0cnt_h_o),
     .data_i	    (data_bus),
-    .vblank		(vblank),            // no PPU timing wired yet
-    .hblank		(hblank),
+    .vblank		(ppu_vblank_start),
+    .hblank		(ppu_hblank_start),
     .halt       (!mem_ready),
     .src_addr	(addr_src_dma0),
     .dst_addr	(addr_dst_dma0),
@@ -605,8 +754,8 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00C6)) dma1 (
     .dmacnt_l_o (dma1cnt_l_o),
     .dmacnt_h_o (dma1cnt_h_o),
     .data_i	    (data_bus),
-    .vblank		(vblank),            // no PPU timing wired yet
-    .hblank		(hblank),
+    .vblank		(ppu_vblank_start),
+    .hblank		(ppu_hblank_start),
     .halt       (!mem_ready),
     .src_addr	(addr_src_dma1),
     .dst_addr	(addr_dst_dma1),
@@ -625,8 +774,8 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00D2)) dma2 (
     .dmacnt_l_o (dma2cnt_l_o),
     .dmacnt_h_o (dma2cnt_h_o),
     .data_i	    (data_bus),
-    .vblank		(vblank),            // no PPU timing wired yet
-    .hblank		(hblank),
+    .vblank		(ppu_vblank_start),
+    .hblank		(ppu_hblank_start),
     .halt       (!mem_ready),
     .src_addr	(addr_src_dma2),
     .dst_addr	(addr_dst_dma2),
@@ -645,8 +794,8 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00DE)) dma3 (
     .dmacnt_l_o (dma3cnt_l_o),
     .dmacnt_h_o (dma3cnt_h_o),
     .data_i	    (data_bus),
-    .vblank		(vblank),            // no PPU timing wired yet
-    .hblank		(hblank),
+    .vblank		(ppu_vblank_start),
+    .hblank		(ppu_hblank_start),
     .halt       (!mem_ready),
     .src_addr	(addr_src_dma3),
     .dst_addr	(addr_dst_dma3),
