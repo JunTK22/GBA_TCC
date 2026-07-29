@@ -448,9 +448,8 @@ module io_registers (
     // -------------------------------------------------------------------------
     function automatic [15:0] read_hword;
         input [8:0] idx;
-        reg   [15:0] base;
+        input [15:0] base;
         begin
-            base = regs[idx];
             case (idx)
                 HW_VCOUNT:    read_hword = vcount_i;
                 HW_KEY:       read_hword = keypad_i;
@@ -469,8 +468,8 @@ module io_registers (
         end
     endfunction
 
-    wire [15:0] rd_lo_q = read_hword(hw_idx_lo_q);
-    wire [15:0] rd_hi_q = read_hword(hw_idx_hi_q);
+    wire [15:0] rd_lo_q = read_hword(hw_idx_lo_q, regs[hw_idx_lo_q]);
+    wire [15:0] rd_hi_q = read_hword(hw_idx_hi_q, regs[hw_idx_hi_q]);
     wire [31:0] rd_word = {rd_hi_q, rd_lo_q};
 
     // ARM-style size + sign extension on the registered data

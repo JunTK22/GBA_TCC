@@ -188,14 +188,15 @@ phase_decode:
     CHECK_EQ 0x08, R4
 
 @ ==============================================================================
-@ PHASE 2 - 16-bit RAM byte lanes and mirrors, excluding SDRAM-backed EWRAM
-@ Palette and VRAM use gba_ram_w16, so byte writes, signed loads, and mirrors
-@ should work without involving the SDRAM controller.
+@ PHASE 2 - 16-bit RAM byte writes and mirrors, excluding SDRAM-backed EWRAM
+@ GBA Palette RAM replicates an 8-bit write across both bytes of the addressed
+@ halfword. VRAM byte-lane, signed-load, and mirror behavior is checked
+@ separately below without involving the SDRAM controller.
 @ ==============================================================================
 phase_w16_local:
     MOV     R7, #2
 
-    MOV     R4, #0x05000000      @ Palette byte lanes.
+    MOV     R4, #0x05000000      @ Palette byte writes replicate.
     MOV     R1, #0
     STRH    R1, [R4, #0x40]
     MOV     R1, #0xA5
@@ -203,7 +204,7 @@ phase_w16_local:
     MOV     R1, #0x5A
     STRB    R1, [R4, #0x41]
     LDRH    R2, [R4, #0x40]
-    LOADH   R1, 0x5AA5
+    LOADH   R1, 0x5A5A
     CHECK_EQ 0x01, R4
 
     MOV     R1, #0x80
