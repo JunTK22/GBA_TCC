@@ -78,6 +78,7 @@ module bg_renderer (
     reg signed [27:0]              aff_y_line         [0:1];
     reg signed [27:0]              aff_x_mosaic       [0:1];
     reg signed [27:0]              aff_y_mosaic       [0:1];
+    reg [7:0]                      aff_pixel_color    [0:1];
     wire signed [27:0]             aff_line_next_x    [0:1];
     wire signed [27:0]             aff_line_next_y    [0:1];
     reg [3:0]                      mosaic_counter;
@@ -413,9 +414,7 @@ module bg_renderer (
                 end
                 if (state[a + 2] == PHASE_WAIT_A) begin
                     enqueue_valid[a + 2] = 1'b1;
-                    enqueue_color[a + 2] = aff_x[a][8]
-                                                 ? vram_read_data[15:8]
-                                                 : vram_read_data[7:0];
+                    enqueue_color[a + 2] = aff_pixel_color[a];
                     enqueue_opaque[a + 2] = enqueue_color[a + 2] != 8'd0;
                     if (!bg_affine_wrap_i[a + 2]
                         && (aff_x[a][27] || aff_y[a][27]
@@ -495,6 +494,7 @@ module bg_renderer (
                 aff_y_line[a] <= bg_aff_y_i[a];
                 aff_x_mosaic[a] <= bg_aff_x_i[a];
                 aff_y_mosaic[a] <= bg_aff_y_i[a];
+                aff_pixel_color[a] <= 8'd0;
             end
             mosaic_counter <= 4'd0;
         end else begin
@@ -562,6 +562,13 @@ module bg_renderer (
                     if (enable && is_vdraw
                         && (tick == ((a == 0) ? 11'd32 : 11'd30))) begin
                         layer_active[a + 2] <= 1'b1;
+                    end
+                    if (enable && layer_active[a + 2]
+                        && (state[a + 2] == PHASE_USE)) begin
+                        // Preserve the tile response across the next BG request
+                        // without moving the existing WAIT_A FIFO commit.
+                        aff_pixel_color[a] <= aff_x[a][8]
+                            ? vram_read_data[15:8] : vram_read_data[7:0];
                     end
                     if (enable && layer_active[a + 2]
                         && (state[a + 2] == PHASE_WAIT_A)) begin
