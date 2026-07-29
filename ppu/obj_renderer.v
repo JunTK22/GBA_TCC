@@ -1,20 +1,11 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// =============================================================================
-//  obj_renderer.v
-//  GBA object scanner, tile fetcher, and double-buffered scanline renderer.
-//
-//  The OAM state machine scans 128 objects and their affine parameters. The
-//  fetch path handles affine/non-affine objects, 4/8 bpp tiles, 1D/2D mapping,
-//  OBJ-window/semitransparent flags, and vertical mosaic. It renders into one
-//  240-pixel buffer while the compositor reads the previous scanline.
-//
-//  VRAM addresses are 16-bit halfword indices within OBJ character VRAM; OAM
-//  addresses are 32-bit word indices. Requests use the even-tick/odd-tick
-//  pipeline cadence. `buffer_data` is
-//  {opaque, color[7:0], priority[1:0], window, blend, mosaic}.
-// =============================================================================
+// The explicit OAM FSM scans attributes and affine parameters. The OBJ VRAM
+// pipeline retains the Scala renderer's even-tick request/odd-tick consume
+// cadence. VRAM addresses are 14-bit halfword indices within OBJ character
+// VRAM; OAM addresses are 32-bit word indices. buffer_data is packed as:
+//   {opaque, color[7:0], prio[1:0], window, blend, mosaic}.
 module obj_renderer (
     input              clock,
     input              reset,
@@ -56,9 +47,30 @@ module obj_renderer (
     reg [3:0] mosaic_counter;
     wire even_tick;
 
-    reg [13:0] buffer0 [0:239];
-    reg [13:0] buffer1 [0:239];
+    // Each scanline page uses one physical M10K. Port B reads the page while
+    // port A commits the preceding cycle's merged pixel. The opposite page is
+    // read synchronously by the compositor.
     reg buffer_page;
+    reg [239:0] buffer0_valid;
+    reg [239:0] buffer1_valid;
+
+    reg buffer_write_pending;
+    reg buffer_write_page;
+    reg [7:0] buffer_write_index;
+    reg [13:0] buffer_write_pixel;
+    reg buffer_write_old_valid;
+    reg buffer_write_forward;
+    reg [13:0] buffer_write_forward_data;
+
+    reg buffer_read_page_q;
+    reg buffer_read_valid_q;
+    reg buffer_read_forward_q;
+    reg [13:0] buffer_read_forward_data_q;
+
+    wire [15:0] buffer0_q_a;
+    wire [15:0] buffer0_q_b;
+    wire [15:0] buffer1_q_a;
+    wire [15:0] buffer1_q_b;
 
     reg [8:0] draw_x;
     reg [1:0] draw_count;
@@ -231,6 +243,29 @@ module obj_renderer (
         end
     endfunction
 
+    function [13:0] merge_buffer_entry;
+        input [13:0] old_entry;
+        input [13:0] pixel;
+        reg [13:0] merged;
+        begin
+            merged = old_entry;
+            if (pixel[2] && pixel[13]) begin
+                merged[2] = 1'b1;
+            end else if (!old_entry[13]
+                         || (pixel[4:3] < old_entry[4:3])) begin
+                if (pixel[13]) begin
+                    merged[13] = 1'b1;
+                    merged[12:5] = pixel[12:5];
+                    merged[1] = pixel[1];
+                end
+                // Preserve the GBA transparent-pixel priority bug.
+                merged[4:3] = pixel[4:3];
+                merged[0] = pixel[0];
+            end
+            merge_buffer_entry = merged;
+        end
+    endfunction
+
     assign even_tick = tick[0] == 1'b0;
     assign attr0 = oam_read_data[15:0];
     assign attr1 = oam_read_data[31:16];
@@ -264,8 +299,86 @@ module obj_renderer (
         ($signed(fetch_pd) * $signed(affine_offset_y))
         + ($signed(fetch_pc) * $signed(affine_offset_x));
 
-    // The compositor reads the page completed on the previous scanline.
-    assign buffer_data = buffer_page ? buffer0[buffer_index] : buffer1[buffer_index];
+    wire draw_buffer_read = enable && !reset
+        && (draw_count != 2'd0) && (draw_x < 9'd240);
+    wire compositor_buffer_read = enable && !reset && buffer_read
+        && (buffer_index < 8'd240);
+    wire buffer_write_commit = enable && !reset && buffer_write_pending;
+
+    wire [13:0] buffer_write_ram_data = buffer_write_page
+        ? buffer1_q_b[13:0] : buffer0_q_b[13:0];
+    wire [13:0] buffer_write_old_entry = buffer_write_forward
+        ? buffer_write_forward_data
+        : (buffer_write_old_valid ? buffer_write_ram_data : 14'd0);
+    wire [13:0] buffer_write_data = merge_buffer_entry(
+        buffer_write_old_entry, buffer_write_pixel);
+
+    wire buffer_write_collision = buffer_write_commit
+        && (buffer_write_page == buffer_page)
+        && (buffer_write_index == draw_x[7:0]);
+    wire buffer_read_collision = buffer_write_commit
+        && (buffer_write_page == !buffer_page)
+        && (buffer_write_index == buffer_index);
+
+    wire draw_buffer_old_valid = buffer_page
+        ? buffer1_valid[draw_x[7:0]]
+        : buffer0_valid[draw_x[7:0]];
+    wire compositor_buffer_valid = buffer_page
+        ? buffer0_valid[buffer_index]
+        : buffer1_valid[buffer_index];
+
+    wire [7:0] buffer0_addr_b = buffer_page
+        ? buffer_index : draw_x[7:0];
+    wire [7:0] buffer1_addr_b = buffer_page
+        ? draw_x[7:0] : buffer_index;
+    wire buffer0_rden_b = buffer_page
+        ? compositor_buffer_read : draw_buffer_read;
+    wire buffer1_rden_b = buffer_page
+        ? draw_buffer_read : compositor_buffer_read;
+
+    M10K_dualport #(
+        .WIDTH(16),
+        .DEPTH_POW2(8),
+        .INIT_FILE("UNUSED")
+    ) buffer0_ram (
+        .clk(clock),
+        .addr_a(buffer_write_index),
+        .byteena_a(2'b11),
+        .data_a({2'b00, buffer_write_data}),
+        .wren_a(buffer_write_commit && !buffer_write_page),
+        .rden_a(1'b0),
+        .q_a(buffer0_q_a),
+        .addr_b(buffer0_addr_b),
+        .rden_b(buffer0_rden_b),
+        .q_b(buffer0_q_b)
+    );
+
+    M10K_dualport #(
+        .WIDTH(16),
+        .DEPTH_POW2(8),
+        .INIT_FILE("UNUSED")
+    ) buffer1_ram (
+        .clk(clock),
+        .addr_a(buffer_write_index),
+        .byteena_a(2'b11),
+        .data_a({2'b00, buffer_write_data}),
+        .wren_a(buffer_write_commit && buffer_write_page),
+        .rden_a(1'b0),
+        .q_a(buffer1_q_a),
+        .addr_b(buffer1_addr_b),
+        .rden_b(buffer1_rden_b),
+        .q_b(buffer1_q_b)
+    );
+
+    wire [13:0] buffer_read_ram_data = buffer_read_page_q
+        ? buffer1_q_b[13:0] : buffer0_q_b[13:0];
+
+    // The compositor receives the synchronous read requested on the preceding
+    // phase. Forward a same-edge render commit because the M10K mixed-port
+    // mode deliberately returns old data.
+    assign buffer_data = !buffer_read_valid_q ? 14'd0
+        : (buffer_read_forward_q
+           ? buffer_read_forward_data_q : buffer_read_ram_data);
 
     // Traditional OAM current-state/next-state decoder.
     always @* begin
@@ -401,9 +514,6 @@ module obj_renderer (
     end
 
     always @(posedge clock) begin : renderer_sequential
-        integer i;
-        reg [13:0] old_entry;
-        reg [13:0] new_entry;
         reg [8:0] clipped;
         reg [7:0] color0;
         reg [7:0] color1;
@@ -420,6 +530,19 @@ module obj_renderer (
             render_y_mosaic <= 8'd0;
             mosaic_counter <= 4'd0;
             buffer_page <= 1'b0;
+            buffer0_valid <= 240'd0;
+            buffer1_valid <= 240'd0;
+            buffer_write_pending <= 1'b0;
+            buffer_write_page <= 1'b0;
+            buffer_write_index <= 8'd0;
+            buffer_write_pixel <= 14'd0;
+            buffer_write_old_valid <= 1'b0;
+            buffer_write_forward <= 1'b0;
+            buffer_write_forward_data <= 14'd0;
+            buffer_read_page_q <= 1'b0;
+            buffer_read_valid_q <= 1'b0;
+            buffer_read_forward_q <= 1'b0;
+            buffer_read_forward_data_q <= 14'd0;
             draw_x <= 9'd0;
             draw_count <= 2'd0;
             draw_data0 <= 14'd0;
@@ -436,36 +559,43 @@ module obj_renderer (
             oam_index <= 7'd0;
             state <= OAM_ATTR01;
             oam_affine_index <= 5'd0;
-            for (i = 0; i < 240; i = i + 1) begin
-                buffer0[i] <= 14'd0;
-                buffer1[i] <= 14'd0;
-            end
         end else if (enable) begin
-            // Drain one queued pixel per clock into the current write page.
-            if (draw_count != 2'd0) begin
-                if (draw_x < 9'd240) begin
-                    old_entry = buffer_page ? buffer1[draw_x] : buffer0[draw_x];
-                    new_entry = old_entry;
-                    if (draw_data0[2] && draw_data0[13]) begin
-                        new_entry[2] = 1'b1;
-                    end else if (!old_entry[13]
-                                 || (draw_data0[4:3] < old_entry[4:3])) begin
-                        if (draw_data0[13]) begin
-                            new_entry[13] = 1'b1;
-                            new_entry[12:5] = draw_data0[12:5];
-                            new_entry[1] = draw_data0[1];
-                        end
-                        // Preserve the GBA transparent-pixel prio bug.
-                        new_entry[4:3] = draw_data0[4:3];
-                        new_entry[0] = draw_data0[0];
-                    end
-
-                    if (buffer_page) begin
-                        buffer1[draw_x] <= new_entry;
-                    end else begin
-                        buffer0[draw_x] <= new_entry;
-                    end
+            // Complete the previous cycle's M10K read/modify/write.
+            if (buffer_write_commit) begin
+                if (buffer_write_page) begin
+                    buffer1_valid[buffer_write_index] <= 1'b1;
+                end else begin
+                    buffer0_valid[buffer_write_index] <= 1'b1;
                 end
+            end
+
+            // Launch the next render-side read. A collision with the write
+            // completing on this edge must bypass the M10K's OLD_DATA result.
+            buffer_write_pending <= draw_buffer_read;
+            if (draw_buffer_read) begin
+                buffer_write_page <= buffer_page;
+                buffer_write_index <= draw_x[7:0];
+                buffer_write_pixel <= draw_data0;
+                buffer_write_old_valid <= draw_buffer_old_valid
+                    || buffer_write_collision;
+                buffer_write_forward <= buffer_write_collision;
+                buffer_write_forward_data <= buffer_write_data;
+            end
+
+            // Capture the validity and page metadata alongside a compositor
+            // read. buffer_data selects the corresponding M10K output during
+            // the following phase.
+            if (buffer_read) begin
+                buffer_read_page_q <= !buffer_page;
+                buffer_read_valid_q <= compositor_buffer_read
+                    && (compositor_buffer_valid || buffer_read_collision);
+                buffer_read_forward_q <= compositor_buffer_read
+                    && buffer_read_collision;
+                buffer_read_forward_data_q <= buffer_write_data;
+            end
+
+            // Drain one queued pixel per clock into the M10K request pipeline.
+            if (draw_count != 2'd0) begin
                 draw_data0 <= draw_data1;
                 draw_count <= draw_count - 2'd1;
                 draw_x <= draw_x + 9'd1;
@@ -658,13 +788,9 @@ module obj_renderer (
 
                 buffer_page <= !buffer_page;
                 if (buffer_page == 1'b0) begin
-                    for (i = 0; i < 240; i = i + 1) begin
-                        buffer1[i] <= 14'd0;
-                    end
+                    buffer1_valid <= 240'd0;
                 end else begin
-                    for (i = 0; i < 240; i = i + 1) begin
-                        buffer0[i] <= 14'd0;
-                    end
+                    buffer0_valid <= 240'd0;
                 end
 
                 oam_index <= 7'd0;
@@ -675,11 +801,6 @@ module obj_renderer (
             end
         end
     end
-
-    // buffer_read is retained for interface compatibility; the Scala buffer
-    // also exposes asynchronous read data regardless of this qualifier.
-    wire unused_buffer_read;
-    assign unused_buffer_read = buffer_read;
 
 endmodule
 

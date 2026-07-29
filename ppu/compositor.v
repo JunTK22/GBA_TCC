@@ -1,21 +1,16 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// =============================================================================
-//  compositor.v
-//  GBA layer sorter, window/mosaic stage, palette fetcher, and color blender.
+// The GBA compositor is a fixed four-phase pipeline rather than a controller
+// with variable transitions. The phase is derived from the PPU tick so that
+// palette requests and returned data remain cycle-for-cycle compatible with
+// the Scala implementation:
+//   0: request top palette entry     1: capture top palette entry
+//   2: request bottom palette entry  3: capture bottom/pass to blend
 //
-//  The compositor consumes one background lane per phase, combines it with the
-//  scanline OBJ buffer and backdrop, selects the two highest-priority layers,
-//  applies window masks and GBA blend effects, and emits a valid 15-bit pixel.
-//  Its fixed four-phase pipeline is derived from `tick`:
-//      0: request top palette entry     1: capture top palette entry
-//      2: request bottom palette entry  3: capture bottom / hand off to blend
-//
-//  Packed backgrounds place BG0 in the least-significant element. Window
-//  controls are {blend, obj, bg[3:0]}; `object_data` is
-//  {opaque, color[7:0], priority[1:0], window, blend, mosaic}.
-// =============================================================================
+// Packed inputs use BG0 in the least-significant element. Window controls are
+// packed as {blend, obj, bg[3:0]}. object_data is packed as
+// {opaque, color[7:0], priority[1:0], window, blend, mosaic}.
 module compositor (
     input              clock,
     input              reset,
@@ -349,12 +344,17 @@ module compositor (
         object_read = 1'b0;
         object_index = fetch_x;
 
-        if (enable && active) begin
-            if (phase == PHASE_BOTTOM_CAPTURE) begin
-                object_read = 1'b1;
-                object_index = fetch_x;
-            end
+        // The OBJ scanline buffer is synchronous. Prefetch during phase 2 so
+        // object_data is available for windowing and sorting during phase 3.
+        // tick 40 is the first request cycle, before active is registered.
+        if (enable && (phase == PHASE_BOTTOM_REQUEST)
+            && (active
+                || ((tick == 11'd40) && (scanline < 8'd160)))) begin
+            object_read = 1'b1;
+            object_index = fetch_x;
+        end
 
+        if (enable && active) begin
             if (tick >= 11'd46) begin
                 case (phase)
                     PHASE_TOP_REQUEST: begin
