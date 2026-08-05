@@ -8,7 +8,8 @@
 //  suppresses PPU requests.
 //
 //  CPU/DMA and PPU addresses at this boundary are byte addresses. CPU/DMA
-//  32-bit accesses use two 16-bit beats. The first same-bank CPU/PPU collision
+//  32-bit accesses use two 16-bit beats. Byte writes replicate across BG VRAM
+//  halfwords and are ignored in OBJ VRAM. The first same-bank CPU/PPU collision
 //  adds one wait cycle without stopping the PPU port or losing a pending beat.
 // =============================================================================
 
@@ -43,12 +44,26 @@ module vram (
     localparam [1:0] BANK_OBJ_HIGH = 2'd2;
     localparam [1:0] BANK_ZERO     = 2'd3;
 
+    localparam [1:0] SIZE_BYTE = 2'b00;
+    localparam [1:0] SIZE_HALF = 2'b01;
+
     wire bitmap_mode = bg_mode > 3'd2;
 
     wire cpu_bg_sel       = !addr[16];
     wire cpu_obj_low_sel  = addr[16] && !addr[14];
     wire cpu_obj_high_sel = addr[16] && addr[14];
     wire cpu_request = rden || we;
+
+    wire cpu_byte_write = we && (size == SIZE_BYTE);
+    wire cpu_bg_byte_write =
+        cpu_byte_write && (cpu_bg_sel || (bitmap_mode && cpu_obj_low_sel));
+    wire cpu_write_allowed = !cpu_byte_write || cpu_bg_byte_write;
+    wire [16:0] cpu_mem_addr =
+        cpu_bg_byte_write ? {addr[16:1], 1'b0} : addr;
+    wire [31:0] cpu_mem_wdata =
+        cpu_bg_byte_write ? {16'h0000, {2{wdata[7:0]}}} : wdata;
+    wire [1:0] cpu_mem_size =
+        cpu_bg_byte_write ? SIZE_HALF : size;
 
     wire bg_request  = bg_rden && !force_blank;
     wire obj_request = obj_rden && !force_blank;
@@ -96,12 +111,12 @@ module vram (
         .INIT_FILE  ("UNUSED")
     ) bg_mem (
         .clk            (clk),
-        .addr           (addr[15:0]),
-        .wdata          (wdata),
+        .addr           (cpu_mem_addr[15:0]),
+        .wdata          (cpu_mem_wdata),
         .rdata          (bg_mem_rdata),
-        .we             (bg_cpu_access && we),
+        .we             (bg_cpu_access && we && cpu_write_allowed),
         .rden           (bg_cpu_access && rden),
-        .size           (size),
+        .size           (cpu_mem_size),
         .sign_extend    (sign_extend),
         .ready          (bg_ready),
         .misalign_fault (bg_misalign_fault),
@@ -122,12 +137,12 @@ module vram (
         .INIT_FILE  ("UNUSED")
     ) obj_low_mem (
         .clk            (clk),
-        .addr           (addr[13:0]),
-        .wdata          (wdata),
+        .addr           (cpu_mem_addr[13:0]),
+        .wdata          (cpu_mem_wdata),
         .rdata          (obj_low_mem_rdata),
-        .we             (obj_low_cpu_access && we),
+        .we             (obj_low_cpu_access && we && cpu_write_allowed),
         .rden           (obj_low_cpu_access && rden),
-        .size           (size),
+        .size           (cpu_mem_size),
         .sign_extend    (sign_extend),
         .ready          (obj_low_ready),
         .misalign_fault (obj_low_misalign_fault),
@@ -146,12 +161,12 @@ module vram (
         .INIT_FILE  ("UNUSED")
     ) obj_high_mem (
         .clk            (clk),
-        .addr           (addr[13:0]),
-        .wdata          (wdata),
+        .addr           (cpu_mem_addr[13:0]),
+        .wdata          (cpu_mem_wdata),
         .rdata          (obj_high_mem_rdata),
-        .we             (obj_high_cpu_access && we),
+        .we             (obj_high_cpu_access && we && cpu_write_allowed),
         .rden           (obj_high_cpu_access && rden),
-        .size           (size),
+        .size           (cpu_mem_size),
         .sign_extend    (sign_extend),
         .ready          (obj_high_ready),
         .misalign_fault (obj_high_misalign_fault),

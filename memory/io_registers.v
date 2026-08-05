@@ -384,7 +384,10 @@ module io_registers (
 
     always @(posedge clk) begin
         if (commit_lo) begin
-            if (we_lo_b0) regs[hw_idx_lo][7:0]  <= wdata_shifted[7:0];
+            if (we_lo_b0) regs[hw_idx_lo][7:0]  <=
+                (hw_idx_lo == HW_DISPSTAT)
+                ? wdata_shifted[7:0] & 8'h38
+                : wdata_shifted[7:0];
             if (we_lo_b1) regs[hw_idx_lo][15:8] <= wdata_shifted[15:8];
         end
         if (commit_hi) begin
