@@ -307,8 +307,10 @@ begin
         // Monitor for refresh or hold
         if (refresh_cnt >= CYCLES_BETWEEN_REFRESH)
           begin
-          next = REF_PRE;
-          command_nxt = CMD_PALL;
+          // Every READ/WRITE uses auto-precharge, so all banks are closed by
+          // IDLE. Issue refresh directly and avoid an unnecessary PALL delay.
+          next = REF_REF;
+          command_nxt = CMD_REF;
           end
         else if (rd_enable)
           begin
@@ -383,7 +385,9 @@ begin
           REF_REF:
             begin
             next = REF_NOP2;
-            state_cnt_nxt = 4'd7;
+            // IS42S16320F-7TL tRC is 63 ns. This produces five clocks from
+            // REF to the next possible ACT (73.5 ns at 68 MHz).
+            state_cnt_nxt = 4'd2;
             end
           // REF_NOP2: default - IDLE
 

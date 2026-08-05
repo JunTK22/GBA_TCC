@@ -1,28 +1,3 @@
-//////////////////////////////////////////////////////////////////////
-//
-// This source file may be used and distributed without
-// restriction provided that this copyright statement is not
-// removed from the file and that any derivative work contains
-// the original copyright notice and the associated disclaimer.
-//
-// This source file is free software; you can redistribute it
-// and/or modify it under the terms of the GNU Lesser General
-// Public License as published by the Free Software Foundation;
-// either version 2.1 of the License, or (at your option) any
-// later version.
-//
-// This source is distributed in the hope that it will be
-// useful, but WITHOUT ANY WARRANTY; without even the implied
-// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
-// PURPOSE.  See the GNU Lesser General Public License for more
-// details.
-//
-// You should have received a copy of the GNU Lesser General
-// Public License along with this source; if not, download it
-// from http://www.opencores.org/lgpl.shtml
-//
-//////////////////////////////////////////////////////////////////////
-
 // =============================================================================
 //  sdram_controller_top.v
 //  CPU-clock to SDRAM-clock wrapper around `sdram_controller`.
@@ -32,8 +7,10 @@
 //  halfword addresses, derives byte masks for subword writes, formats byte and
 //  halfword reads, and requests two SDRAM half-beats for 32-bit word transfers.
 //
-//  Requests cross into the SDRAM clock domain through edge synchronizers plus
-//  held `rd_req`/`wr_req` signals until the core accepts the transaction.
+//  The CPU and SDRAM clocks are related PLL outputs. A new host beat is sampled
+//  on the first following SDRAM edge, then held until the core accepts it. The
+//  completion flag is retimed on the SDRAM falling edge so it is stable before
+//  the inverse-CPU-clock edge that updates `nWAIT`.
 // =============================================================================
 
 module sdram_controller_top (
@@ -66,6 +43,48 @@ wire is_ewram = addr[27:24] == 4'h2;
 wire is_byte  = (MAS == 2'b00);
 wire is_word  = MAS[1];            // MAS: 10=word, 01=half, 00=byte
 
+wire        access   = rd_en || wr_en;
+reg  [29:0] acc_q = 0;
+wire [29:0] acc      = {addr, rd_en, wr_en};
+wire        new_beat = access && (acc != acc_q);
+always @(posedge clock) acc_q <= acc;
+
+// Minimum GBA-visible access length, counted at inverse CPU-clock edges. The
+// first edge after launch loads count 1; the final threshold is visible before
+// the edge that releases `nWAIT`. PAK accesses use default non-sequential time.
+wire [2:0] min_wait_edges = is_ewram ? (is_word ? 3'd5 : 3'd2)
+                                      : (is_word ? 3'd7 : 3'd4);
+reg [2:0] wait_edges = 0;
+always @(posedge clock or negedge nrst)
+    if (!nrst)            wait_edges <= 0;
+    else if (!access)     wait_edges <= 0;
+    else if (new_beat)    wait_edges <= 3'd1;
+    else if (wait_edges != 3'd7)
+        wait_edges <= wait_edges + 1'b1;
+
+wire timing_ready = wait_edges >= min_wait_edges;
+
+// `clock` is the inverse 17 MHz host clock and `clock_sdram` is its related
+// 68 MHz PLL output. `new_beat` is therefore stable by the next SDRAM edge.
+reg beat_seen = 0;
+always @(posedge clock_sdram or negedge nrst)
+    if (!nrst) beat_seen <= 0;
+    else       beat_seen <= new_beat;
+
+wire beat_start    = new_beat && !beat_seen;
+wire rd_start_fast = beat_start && rd_en;
+wire wr_start_fast = beat_start && wr_en;
+
+wire [24:0] mapped_addr = is_ewram
+                        ? {8'b0, addr[17:1]}
+                        : {1'b1, addr[24:1]};
+wire [31:0] mapped_wr_data = is_byte
+                           ? {16'b0, {2{wr_data[7:0]}}}
+                           : wr_data;
+wire [1:0] mapped_byte_mask = is_byte
+                            ? (addr[0] ? 2'b10 : 2'b01)
+                            : 2'b00;
+
 reg [24:0] addr_r = 0;
 reg [31:0] wr_data_r = 0;
 reg [1:0]  byte_mask_r = 2'b00;   // DQM {low,high} for the latched write beat
@@ -76,79 +95,68 @@ reg        rd_byte_r = 0;   // this beat is a byte load
 reg        rd_lane_r = 0;   // addr[0]: which byte within the halfword
 reg        rd_sign_r = 0;   // sign-extend the loaded byte
 
-always @(posedge clock) begin
-    if (wr_en || rd_en) begin
-        addr_r <= is_ewram ? {8'b0,addr[17:1]} : {1'b1,addr[24:1]};
+always @(posedge clock_sdram or negedge nrst) begin
+    if (!nrst) begin
+        addr_r      <= 0;
+        wr_data_r   <= 0;
+        byte_mask_r <= 2'b00;
+        word_r      <= 0;
+        rd_byte_r   <= 0;
+        rd_lane_r   <= 0;
+        rd_sign_r   <= 0;
+    end else if (beat_start) begin
+        addr_r <= mapped_addr;
         word_r <= is_word;
-    end
-    if (wr_en) begin
-        // Byte: replicate into the low lane (core uses [15:0]); DQM picks the
-        // addressed byte. Half/word: pass the full 32 bits; the core writes the
-        // low half then the high half on a word access.
-        wr_data_r   <= is_byte ? {16'b0, {2{wr_data[7:0]}}} : wr_data;
-        byte_mask_r <= is_byte ? (addr[0] ? 2'b10 : 2'b01) : 2'b00;
-    end
-    if (rd_en) begin
-        rd_byte_r <= is_byte;
-        rd_lane_r <= addr[0];
-        rd_sign_r <= sign_extend;
+
+        if (wr_en) begin
+            // Byte: replicate into the low lane (core uses [15:0]); DQM picks
+            // the addressed byte. Half/word: pass the full 32 bits; the core
+            // writes the low half then the high half on a word access.
+            wr_data_r   <= mapped_wr_data;
+            byte_mask_r <= mapped_byte_mask;
+        end
+        if (rd_en) begin
+            rd_byte_r <= is_byte;
+            rd_lane_r <= addr[0];
+            rd_sign_r <= sign_extend;
+        end
     end
 end
+
+// On the beat-start edge the controller must see the live payload; the
+// registered copy holds it stable if refresh delays acceptance.
+wire [24:0] core_addr      = beat_start ? mapped_addr      : addr_r;
+wire [31:0] core_wr_data   = beat_start ? mapped_wr_data   : wr_data_r;
+wire [1:0]  core_byte_mask = beat_start ? mapped_byte_mask : byte_mask_r;
+wire        core_word      = beat_start ? is_word          : word_r;
 
 // Read Data
 
 wire [31:0] rd_data_i;
 wire        rd_ready;
-reg [31:0]  rd_data_r0 = 0, rd_data_r1 = 0, rd_data_r2 = 0;
-reg         rd_ready_r0 = 0, rd_ready_r1 = 0;
+reg [31:0]  rd_data_r = 0;
 
-wire rd_ready_pulse = !rd_ready_r1 && rd_ready_r0;
-
-always @(posedge clock_sdram) begin
-    rd_ready_r0 <= rd_ready;
-    rd_ready_r1 <= rd_ready_r0;
-    rd_data_r0 <= rd_data_i;
-    rd_data_r1 <= rd_data_r0;
-    if (rd_ready_pulse) rd_data_r2 <= rd_data_r0;
-end
+always @(posedge clock_sdram or negedge nrst)
+    if (!nrst)         rd_data_r <= 0;
+    else if (rd_ready) rd_data_r <= rd_data_i;
 
 // Word loads return the full 32 bits the core assembled (low half in [15:0],
 // high half in [31:16]). Byte loads select the addressed lane of the low half
 // and optionally sign-extend. Halfword loads zero-extend the low half.
-wire [7:0]  rd_byte     = rd_lane_r ? rd_data_r2[15:8] : rd_data_r2[7:0];
+wire [7:0]  rd_byte     = rd_lane_r ? rd_data_r[15:8] : rd_data_r[7:0];
 wire [31:0] rd_byte_ext = rd_sign_r ? {{24{rd_byte[7]}}, rd_byte} : {24'b0, rd_byte};
-assign rd_data = word_r    ? rd_data_r2
+assign rd_data = word_r    ? rd_data_r
                : rd_byte_r ? rd_byte_ext
-               :             {rd_sign_r ? {16{rd_data_r2[15]}} : 16'b0, rd_data_r2[15:0]};
+               :             {rd_sign_r ? {16{rd_data_r[15]}} : 16'b0, rd_data_r[15:0]};
 
 ///////////////////////////////////////////////////////////////////////
-
-wire        access   = rd_en || wr_en;
-reg  [29:0] acc_q = 0;
-wire [29:0] acc      = {addr, rd_en, wr_en};
-wire        new_beat = access && (acc != acc_q);
-always @(posedge clock) acc_q <= acc;
-
-reg rd_start = 0, wr_start = 0;
-always @(posedge clock) begin
-    rd_start <= new_beat && rd_en;
-    wr_start <= new_beat && wr_en;
-end
-
-// 2-FF synchronizer
-reg rd_s0 = 0, rd_s1 = 0, rd_s2 = 0;
-reg wr_s0 = 0, wr_s1 = 0, wr_s2 = 0;
-always @(posedge clock_sdram) begin
-    rd_s0 <= rd_start; rd_s1 <= rd_s0; rd_s2 <= rd_s1;
-    wr_s0 <= wr_start; wr_s1 <= wr_s0; wr_s2 <= wr_s1;
-end
-wire rd_edge = rd_s1 && !rd_s2;
-wire wr_edge = wr_s1 && !wr_s2;
 
 // "accept" = core enters a transaction; "busy_end" = core leaves one.
 wire core_busy;
 reg core_busy_d = 0;
-always @(posedge clock_sdram) core_busy_d <= core_busy;
+always @(posedge clock_sdram or negedge nrst)
+    if (!nrst) core_busy_d <= 0;
+    else       core_busy_d <= core_busy;
 wire accept    =  core_busy && !core_busy_d;
 wire busy_end  = !core_busy &&  core_busy_d;
 
@@ -159,38 +167,45 @@ always @(posedge clock_sdram)
         rd_req <= 0;
         wr_req <= 0;
     end else begin
-        if (rd_edge)                          rd_req <= 1;
+        if (rd_start_fast)                    rd_req <= 1;
         else if (accept && rd_req)            rd_req <= 0;
 
-        if (wr_edge)                          wr_req <= 1;
+        if (wr_start_fast)                    wr_req <= 1;
         else if (accept && !rd_req && wr_req) wr_req <= 0;
     end
 
-wire rd_en_pulse = rd_req;
-wire wr_en_pulse = wr_req;
+wire rd_en_pulse = rd_req || rd_start_fast;
+wire wr_en_pulse = wr_req || wr_start_fast;
 
 //////////////////////////////////////////
 
-reg done = 0;
+reg done_fast = 0;
+reg done_phase = 0;
 always @(posedge clock_sdram or negedge nrst)
-    if (!nrst)                            done <= 0;
-    else if (rd_ready_pulse || busy_end)  done <= 1;
-    else if (rd_edge || wr_edge)          done <= 0;
+    if (!nrst)                               done_fast <= 0;
+    else if (rd_start_fast || wr_start_fast) done_fast <= 0;
+    else if (rd_ready || busy_end)           done_fast <= 1;
 
-assign busy = access && !(done && !new_beat);
+// The falling-edge retime gives the following `clock_n` edge half an SDRAM
+// cycle of setup margin, avoiding the nearly coincident rising edges.
+always @(negedge clock_sdram or negedge nrst)
+    if (!nrst) done_phase <= 0;
+    else       done_phase <= done_fast;
+
+assign busy = access && !(done_phase && timing_ready && !new_beat);
 
 // ======================================================================
 // SDRAM controller core (clock_sdram domain)
 // ======================================================================
 sdram_controller sdram_controlleri (
     /* HOST INTERFACE */
-    .wr_addr       (addr_r),
-    .wr_data       (wr_data_r),
-    .byte_mask     (byte_mask_r),
-    .word          (word_r),
+    .wr_addr       (core_addr),
+    .wr_data       (core_wr_data),
+    .byte_mask     (core_byte_mask),
+    .word          (core_word),
     .wr_enable     (wr_en_pulse),
 
-    .rd_addr       (addr_r),
+    .rd_addr       (core_addr),
     .rd_data       (rd_data_i),
     .rd_ready      (rd_ready),
     .rd_enable     (rd_en_pulse),
