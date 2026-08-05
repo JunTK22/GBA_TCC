@@ -58,23 +58,17 @@ module vram (
     wire cpu_bg_byte_write =
         cpu_byte_write && (cpu_bg_sel || (bitmap_mode && cpu_obj_low_sel));
     wire cpu_write_allowed = !cpu_byte_write || cpu_bg_byte_write;
-    wire [16:0] cpu_mem_addr =
-        cpu_bg_byte_write ? {addr[16:1], 1'b0} : addr;
-    wire [31:0] cpu_mem_wdata =
-        cpu_bg_byte_write ? {16'h0000, {2{wdata[7:0]}}} : wdata;
-    wire [1:0] cpu_mem_size =
-        cpu_bg_byte_write ? SIZE_HALF : size;
+    wire [16:0] cpu_mem_addr    = cpu_bg_byte_write ? {addr[16:1], 1'b0} : addr;
+    wire [31:0] cpu_mem_wdata   = cpu_bg_byte_write ? {16'h0000, {2{wdata[7:0]}}} : wdata;
+    wire [1:0]  cpu_mem_size    = cpu_bg_byte_write ? SIZE_HALF : size;
 
     wire bg_request  = bg_rden && !force_blank;
     wire obj_request = obj_rden && !force_blank;
 
     wire ppu_bg_read = bg_request && !bg_addr[16];
-    wire ppu_obj_low_bg_read =
-        bg_request && bitmap_mode && bg_addr[16] && !bg_addr[14];
-    wire ppu_obj_low_obj_read =
-        obj_request && !bitmap_mode && !obj_addr[14];
-    wire ppu_obj_low_read =
-        ppu_obj_low_bg_read || ppu_obj_low_obj_read;
+    wire ppu_obj_low_bg_read    = bg_request && bitmap_mode && bg_addr[16] && !bg_addr[14];
+    wire ppu_obj_low_obj_read   = obj_request && !bitmap_mode && !obj_addr[14];
+    wire ppu_obj_low_read       = ppu_obj_low_bg_read || ppu_obj_low_obj_read;
     wire ppu_obj_high_read = obj_request && obj_addr[14];
 
     wire cpu_bg_request = cpu_request && cpu_bg_sel;
@@ -82,19 +76,15 @@ module vram (
     wire cpu_obj_high_request = cpu_request && cpu_obj_high_sel;
 
     wire cpu_bg_collision = cpu_bg_request && ppu_bg_read;
-    wire cpu_obj_low_collision =
-        cpu_obj_low_request && ppu_obj_low_read;
-    wire cpu_obj_high_collision =
-        cpu_obj_high_request && ppu_obj_high_read;
-    wire cpu_collision =
-        cpu_bg_collision || cpu_obj_low_collision || cpu_obj_high_collision;
+    wire cpu_obj_low_collision  = cpu_obj_low_request && ppu_obj_low_read;
+    wire cpu_obj_high_collision = cpu_obj_high_request && ppu_obj_high_read;
+    wire cpu_collision          = cpu_bg_collision || cpu_obj_low_collision || cpu_obj_high_collision;
 
     // Only the first collision in a held CPU/DMA transaction inserts a wait.
     // The physical second port lets the PPU continue while the held CPU beat is
     // serviced on the following cycle.
     reg cpu_collision_waited = 1'b0;
-    wire cpu_collision_stall =
-        cpu_request && cpu_collision && !cpu_collision_waited;
+    wire cpu_collision_stall = cpu_request && cpu_collision && !cpu_collision_waited;
     wire cpu_access_issued = cpu_request && !cpu_collision_stall;
 
     wire bg_cpu_access = cpu_access_issued && cpu_bg_sel;
@@ -125,8 +115,7 @@ module vram (
         .ppu_rdata      (bg_ppu_rdata)
     );
 
-    wire [12:0] obj_low_ppu_addr =
-        ppu_obj_low_bg_read ? bg_addr[13:1] : obj_addr[13:1];
+    wire [12:0] obj_low_ppu_addr = ppu_obj_low_bg_read ? bg_addr[13:1] : obj_addr[13:1];
     wire [31:0] obj_low_mem_rdata;
     wire [15:0] obj_low_ppu_rdata;
     wire obj_low_ready;
@@ -208,25 +197,21 @@ module vram (
         end
     end
 
-    assign bg_rdata =
-        bg_response_bank == BANK_BG      ? bg_ppu_rdata
-      : bg_response_bank == BANK_OBJ_LOW ? obj_low_ppu_rdata
-      : 16'h0000;
+    assign bg_rdata = bg_response_bank == BANK_BG       ? bg_ppu_rdata
+                    : bg_response_bank == BANK_OBJ_LOW  ? obj_low_ppu_rdata
+                    : 16'h0000;
 
-    assign obj_rdata =
-        obj_response_bank == BANK_OBJ_HIGH ? obj_high_ppu_rdata
-      : obj_response_bank == BANK_OBJ_LOW  ? obj_low_ppu_rdata
-      : 16'h0000;
+    assign obj_rdata = obj_response_bank == BANK_OBJ_HIGH ? obj_high_ppu_rdata
+                     : obj_response_bank == BANK_OBJ_LOW  ? obj_low_ppu_rdata
+                     : 16'h0000;
 
-    assign rdata =
-        cpu_response_bank == BANK_BG       ? bg_mem_rdata
-      : cpu_response_bank == BANK_OBJ_HIGH ? obj_high_mem_rdata
-      : obj_low_mem_rdata;
+    assign rdata = cpu_response_bank == BANK_BG       ? bg_mem_rdata
+                 : cpu_response_bank == BANK_OBJ_HIGH ? obj_high_mem_rdata
+                 : obj_low_mem_rdata;
 
-    wire selected_ready =
-        cpu_bg_sel       ? bg_ready
-      : cpu_obj_high_sel ? obj_high_ready
-      : obj_low_ready;
+    wire selected_ready = cpu_bg_sel       ? bg_ready
+                        : cpu_obj_high_sel ? obj_high_ready
+                        : obj_low_ready;
 
     always @(posedge clk) begin
         if (!cpu_request)
@@ -237,12 +222,10 @@ module vram (
             cpu_collision_waited <= 1'b0;
     end
 
-    assign ready =
-        !cpu_request || (!cpu_collision_stall && selected_ready);
+    assign ready = !cpu_request || (!cpu_collision_stall && selected_ready);
 
-    assign misalign_fault =
-        cpu_response_bank == BANK_BG       ? bg_misalign_fault
-      : cpu_response_bank == BANK_OBJ_HIGH ? obj_high_misalign_fault
-      : obj_low_misalign_fault;
+    assign misalign_fault = cpu_response_bank == BANK_BG       ? bg_misalign_fault
+                          : cpu_response_bank == BANK_OBJ_HIGH ? obj_high_misalign_fault
+                          : obj_low_misalign_fault;
 
 endmodule
