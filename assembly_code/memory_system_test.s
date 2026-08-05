@@ -8,18 +8,19 @@
 @   OAM   0x07000000, ROM   0x08000000/0A000000/0C000000,
 @   SRAM  0x0E000000/0F000000.
 @
-@ Current RTL note:
-@   gba_rev0.v currently backs EWRAM and PAK_ROM with the SDRAM controller.
-@   The baseline phases therefore use halfword accesses for those regions.
-@   The final strict phase intentionally checks GBA-style byte lanes and
-@   split transfers on 16-bit/8-bit external regions; failures there point to
-@   missing bus-splitting or byte-enable behavior.
+@ Conformance and loader scope:
+@   Internal memory and I/O checks follow GBA-visible behavior. The FPGA PAK_ROM
+@   and Cart RAM apertures are intentional writable preload targets for a future
+@   microSD loader, so their tests follow the implemented storage adapters:
+@   16-bit SDRAM beats for PAK_ROM and multi-byte assembly over 8-bit Cart RAM.
+@   Cartridge protocols, wait-state cycle counts, and open-bus behavior are
+@   outside this diagnostic.
 @
 @ Failure reporting:
 @   R7  = phase number
 @   R0  = 0xPC failure code: P = phase, C = check inside that phase
 @   R8  = observed value
-@   R9  = expected value
+@   R9  = expected value, or inclusive upper bound for a range check
 @   R10 = address being checked
 @ ==============================================================================
 
@@ -56,6 +57,19 @@
         BNE     .Lcheck_fail\@
         B       .Lcheck_done\@
 .Lcheck_fail\@:
+        MOV     R0, R7, LSL #4
+        ORR     R0, R0, #\code
+        B       fail
+.Lcheck_done\@:
+    .endm
+
+    .macro CHECK_LS code, addr_reg
+        CMP     R2, R1
+        BLS     .Lcheck_done\@
+.Lcheck_fail\@:
+        MOV     R8, R2
+        MOV     R9, R1
+        MOV     R10, \addr_reg
         MOV     R0, R7, LSL #4
         ORR     R0, R0, #\code
         B       fail
@@ -106,9 +120,9 @@ reset_handler:
 
 @ ==============================================================================
 @ PHASE 1 - region decode isolation
-@ Writes distinct sentinels to every implemented region, then reads them back
-@ after all writes have completed. This catches wrong write enables and read mux
-@ selection errors.
+@ Writes distinct sentinels to every implemented writable region, then reads
+@ them back after all writes have completed. This catches wrong write enables
+@ and read mux selection errors.
 @ ==============================================================================
 phase_decode:
     MOV     R7, #1
@@ -122,7 +136,7 @@ phase_decode:
     STR     R1, [R4, #0x20]
 
     MOV     R4, #0x04000000      @ IO, generic writable BG0CNT register.
-    LOADH   R1, 0x4018
+    LOADH   R1, 0x40C8           @ Only architecturally writable bits are set.
     STRH    R1, [R4, #0x08]
 
     MOV     R4, #0x05000000      @ Palette RAM, 16-bit port.
@@ -137,7 +151,7 @@ phase_decode:
     LOADW   R1, 0x07, 0x12, 0x34, 0x56
     STR     R1, [R4, #0x20]
 
-    MOV     R4, #0x08000000      @ PAK_ROM aperture, SDRAM-backed here.
+    MOV     R4, #0x08000000      @ Writable PAK_ROM preload aperture.
     ADD     R5, R4, #0x1000
     LOADH   R1, 0x8020
     STRH    R1, [R5]
@@ -158,7 +172,7 @@ phase_decode:
 
     MOV     R4, #0x04000000
     LDRH    R2, [R4, #0x08]
-    LOADH   R1, 0x4018
+    LOADH   R1, 0x40C8
     CHECK_EQ 0x03, R4
 
     MOV     R4, #0x05000000
@@ -189,68 +203,87 @@ phase_decode:
 
 @ ==============================================================================
 @ PHASE 2 - 16-bit RAM byte writes and mirrors, excluding SDRAM-backed EWRAM
-@ GBA Palette RAM replicates an 8-bit write across both bytes of the addressed
-@ halfword. VRAM byte-lane, signed-load, and mirror behavior is checked
-@ separately below without involving the SDRAM controller.
+@ GBA byte writes replicate across both lanes in Palette RAM and BG VRAM.
+@ Byte writes to OBJ VRAM are ignored. Signed-load and mirror behavior is also
+@ checked without involving the SDRAM controller.
 @ ==============================================================================
 phase_w16_local:
     MOV     R7, #2
 
     MOV     R4, #0x05000000      @ Palette byte writes replicate.
+    ADD     R5, R4, #0x40
     MOV     R1, #0
-    STRH    R1, [R4, #0x40]
+    STRH    R1, [R5]
     MOV     R1, #0xA5
-    STRB    R1, [R4, #0x40]
+    STRB    R1, [R5]
     MOV     R1, #0x5A
-    STRB    R1, [R4, #0x41]
-    LDRH    R2, [R4, #0x40]
+    STRB    R1, [R5, #1]
+    LDRH    R2, [R5]
     LOADH   R1, 0x5A5A
-    CHECK_EQ 0x01, R4
+    CHECK_EQ 0x01, R5
 
+    ADD     R5, R4, #0x42
     MOV     R1, #0x80
-    STRB    R1, [R4, #0x42]
-    LDRSB   R2, [R4, #0x42]
+    STRB    R1, [R5]
+    LDRSB   R2, [R5]
     MVN     R1, #0x7F           @ 0xFFFFFF80
-    CHECK_EQ 0x02, R4
+    CHECK_EQ 0x02, R5
 
     LOADH   R1, 0x5A5A          @ Palette 0x400-byte mirror.
-    STRH    R1, [R4, #0x80]
+    ADD     R5, R4, #0x80
+    STRH    R1, [R5]
     ADD     R5, R4, #0x400
-    LDRH    R2, [R5, #0x80]
+    ADD     R5, R5, #0x80
+    LDRH    R2, [R5]
     LOADH   R1, 0x5A5A
     CHECK_EQ 0x03, R5
 
-    MOV     R4, #0x06000000      @ VRAM byte lanes.
+    MOV     R4, #0x06000000      @ Mode-0 BG VRAM byte writes replicate.
+    ADD     R5, R4, #0x40
     MOV     R1, #0
-    STRH    R1, [R4, #0x40]
+    STRH    R1, [R5]
     MOV     R1, #0xC3
-    STRB    R1, [R4, #0x40]
+    STRB    R1, [R5]
     MOV     R1, #0x3C
-    STRB    R1, [R4, #0x41]
-    LDRH    R2, [R4, #0x40]
-    LOADH   R1, 0x3CC3
-    CHECK_EQ 0x04, R4
+    STRB    R1, [R5, #1]
+    LDRH    R2, [R5]
+    LOADH   R1, 0x3C3C
+    CHECK_EQ 0x04, R5
 
+    ADD     R5, R4, #0x10000    @ Mode-0 OBJ VRAM ignores byte writes.
+    ADD     R5, R5, #0x40
+    LOADH   R1, 0x4D4D
+    STRH    R1, [R5]
+    MOV     R1, #0xA6
+    STRB    R1, [R5]
+    LDRH    R2, [R5]
+    LOADH   R1, 0x4D4D
+    CHECK_EQ 0x05, R5
+
+    ADD     R5, R4, #0x42
     LOADH   R1, 0xFF80
-    STRH    R1, [R4, #0x42]
-    LDRSH   R2, [R4, #0x42]
+    STRH    R1, [R5]
+    LDRSH   R2, [R5]
     MVN     R1, #0x7F           @ 0xFFFFFF80
-    CHECK_EQ 0x05, R4
+    CHECK_EQ 0x06, R5
 
     LOADH   R1, 0x6A6A          @ VRAM upper 32 KB fold.
     ADD     R5, R4, #0x10000
-    STRH    R1, [R5, #0x40]
+    ADD     R5, R5, #0x40
+    STRH    R1, [R5]
     ADD     R5, R5, #0x8000
-    LDRH    R2, [R5, #0x40]
+    LDRH    R2, [R5]
     LOADH   R1, 0x6A6A
-    CHECK_EQ 0x06, R5
+    CHECK_EQ 0x07, R5
 
     LOADH   R1, 0x6B6B          @ VRAM 0x20000-byte mirror.
-    STRH    R1, [R4, #0x80]
+    ADD     R5, R4, #0x80
+    STRH    R1, [R5]
     ADD     R5, R4, #0x20000
-    LDRH    R2, [R5, #0x80]
+    ADD     R5, R5, #0x80
+    LDRH    R2, [R5]
     LOADH   R1, 0x6B6B
-    CHECK_EQ 0x07, R5
+    CHECK_EQ 0x08, R5
 
 @ ==============================================================================
 @ PHASE 3 - 32-bit memories and mirrors
@@ -298,36 +331,51 @@ phase_w32:
     LOADW   R1, 0xCA, 0xFE, 0xBA, 0xBE
     CHECK_EQ 0x06, R5
 
+    ADD     R5, R4, #0x140      @ OAM ignores byte writes.
+    LOADH   R1, 0x5AA5
+    STRH    R1, [R5]
+    MOV     R1, #0x3C
+    STRB    R1, [R5]
+    LDRH    R2, [R5]
+    LOADH   R1, 0x5AA5
+    CHECK_EQ 0x07, R5
+
 @ ==============================================================================
 @ PHASE 4 - IO register file semantics
-@ Checks generic byte/half/word storage plus a few hardware-driven fields wired
-@ at top level: KEY = 0x03FF, VCOUNT = 0, DISPSTAT status bits = 0.
+@ Uses readable registers and architecturally writable bit patterns. DISPSTAT
+@ status bits are dynamic and are masked before comparing; reserved bits 6-7
+@ must read zero. VCOUNT must remain in its documented 0..227 range. KEY is a
+@ fixture-specific check because the current top ties all keys released.
 @ ==============================================================================
 phase_io:
     MOV     R7, #4
     MOV     R4, #0x04000000
 
-    LOADW   R1, 0x13, 0x57, 0x24, 0x68
-    STR     R1, [R4, #0x28]      @ BG2X low/high registers.
-    LDR     R2, [R4, #0x28]
-    LOADW   R1, 0x13, 0x57, 0x24, 0x68
-    CHECK_EQ 0x01, R4
+    ADD     R5, R4, #0x08        @ Readable BG0CNT/BG1CNT pair.
+    LOADW   R1, 0x81, 0x83, 0x40, 0xC8
+    STR     R1, [R5]
+    LDR     R2, [R5]
+    LOADW   R1, 0x81, 0x83, 0x40, 0xC8
+    CHECK_EQ 0x01, R5
 
-    MOV     R1, #0xAA
-    STRB    R1, [R4, #0x29]
-    LDRH    R2, [R4, #0x28]
-    LOADH   R1, 0xAA68
-    CHECK_EQ 0x02, R4
+    MOV     R1, #0x81
+    STRB    R1, [R5, #1]
+    LDRH    R2, [R5]
+    LOADH   R1, 0x81C8
+    CHECK_EQ 0x02, R5
 
-    LOADH   R1, 0xFFFF
-    STRH    R1, [R4, #0x04]      @ DISPSTAT: low status bits are read-only.
-    LDRH    R2, [R4, #0x04]
-    LOADH   R1, 0xFFF8
-    CHECK_EQ 0x03, R4
+    ADD     R5, R4, #0x04
+    LOADH   R1, 0xFFC0           @ Reserved bits 6-7 must not be stored.
+    STRH    R1, [R5]
+    LDRH    R2, [R5]
+    BIC     R2, R2, #0x07        @ Ignore live V/H/VCOUNT status.
+    LOADH   R1, 0xFF00
+    CHECK_EQ 0x03, R5
 
-    LDRH    R2, [R4, #0x06]      @ VCOUNT input tied to zero.
-    MOV     R1, #0
-    CHECK_EQ 0x04, R4
+    ADD     R5, R4, #0x06
+    LDRH    R2, [R5]
+    MOV     R1, #227
+    CHECK_LS 0x04, R5
 
     ADD     R5, R4, #0x100
     LDRH    R2, [R5, #0x30]      @ KEY input tied to all released.
@@ -343,8 +391,8 @@ phase_io:
 
 @ ==============================================================================
 @ PHASE 5 - Cart SRAM byte port and mirrors
-@ The implemented cart RAM is byte-only. Strict wider-access behavior is checked
-@ later because it requires bus splitting outside cart_ram.v.
+@ Baseline byte and mirror behavior for the writable Cart RAM preload aperture.
+@ Loader-facing halfword/word assembly is checked separately in phase 8.
 @ ==============================================================================
 phase_cart:
     MOV     R7, #5
@@ -371,8 +419,8 @@ phase_cart:
     CHECK_EQ 0x03, R5
 
 @ ==============================================================================
-@ PHASE 6 - SDRAM-backed EWRAM and PAK_ROM address mirrors
-@ These verify the address folding implemented in sdram_controller_top.v.
+@ PHASE 6 - SDRAM-backed EWRAM and writable PAK_ROM address mirrors
+@ These verify the address folding used by the current preload storage.
 @ ==============================================================================
 phase_sdram_map:
     MOV     R7, #6
@@ -385,7 +433,7 @@ phase_sdram_map:
     LOADH   R1, 0x2A2A
     CHECK_EQ 0x01, R5
 
-    MOV     R4, #0x08000000      @ ROM image mirrors 0x08/0x0A/0x0C.
+    MOV     R4, #0x08000000      @ PAK image mirrors 0x08/0x0A/0x0C.
     ADD     R5, R4, #0x2000
     LOADH   R1, 0x8ACE
     STRH    R1, [R5]
@@ -499,11 +547,13 @@ phase_dma:
     CHECK_EQ 0x08, R5
 
 @ ==============================================================================
-@ PHASE 8 - strict GBA-compatible split-transfer checks
-@ These are expected to fail on the current RTL if 16-bit/8-bit regions do not
-@ receive byte enables or split wider CPU accesses into multiple bus cycles.
+@ PHASE 8 - split transfers through narrow memory adapters
+@ EWRAM supports byte lanes and splits words into two halfword bus beats.
+@ Palette RAM and VRAM support 32-bit CPU accesses as two halfwords. The
+@ loader-facing PAK_ROM and Cart RAM apertures deliberately assemble wider
+@ accesses over their 16-bit and 8-bit storage ports.
 @ ==============================================================================
-phase_strict_gba:
+phase_w16_access:
     MOV     R7, #8
 
     MOV     R4, #0x02000000      @ EWRAM byte lane through SDRAM path.
@@ -530,7 +580,7 @@ phase_strict_gba:
     LOADH   R1, 0x5566
     CHECK_EQ 0x03, R5
 
-    MOV     R4, #0x08000000      @ PAK_ROM/SDRAM 16-bit split behavior.
+    MOV     R4, #0x08000000      @ Writable PAK_ROM 16-bit split behavior.
     ADD     R5, R4, #0x3000
     MOV     R1, #0
     STRH    R1, [R5]
@@ -544,7 +594,7 @@ phase_strict_gba:
     LOADH   R1, 0x99AA
     CHECK_EQ 0x05, R5
 
-    MOV     R4, #0x0E000000      @ Cart SRAM halfword split behavior.
+    MOV     R4, #0x0E000000      @ Cart RAM halfword assembly.
     ADD     R5, R4, #0xC0
     MOV     R1, #0
     STRB    R1, [R5]
@@ -558,13 +608,8 @@ phase_strict_gba:
     MOV     R1, #0xA5
     CHECK_EQ 0x07, R5
 
-@ ---- narrow-port multi-beat LOAD assembly (read side of a wide access) -------
-@ Phases 1-9 only ever read these narrow ports as bytes/halfwords. A full-width
-@ load has to reassemble the value from several beats: gba_ram_w16 builds a word
-@ from {high,low} halfwords, cart_ram a word/halfword from four/two bytes. A
-@ dropped or mis-ordered beat shows up as a corrupted load. Every value keeps a
-@ non-zero high half so a missing upper beat cannot masquerade as a correct zero.
-    MOV     R4, #0x05000000      @ Palette word load (gba_ram_w16 two-beat).
+@ ---- narrow-port multi-beat load assembly ------------------------------------
+    MOV     R4, #0x05000000      @ Palette word uses two halfword beats.
     ADD     R4, R4, #0x100
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     STR     R1, [R4]
@@ -572,7 +617,7 @@ phase_strict_gba:
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     CHECK_EQ 0x08, R4
 
-    MOV     R4, #0x06000000      @ VRAM word load (gba_ram_w16 two-beat).
+    MOV     R4, #0x06000000      @ VRAM word uses two halfword beats.
     ADD     R4, R4, #0x100
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     STR     R1, [R4]
@@ -580,7 +625,7 @@ phase_strict_gba:
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     CHECK_EQ 0x09, R4
 
-    MOV     R4, #0x0E000000      @ Cart word load (8-bit four-beat).
+    MOV     R4, #0x0E000000      @ Cart RAM word uses four byte beats.
     ADD     R4, R4, #0x100
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     STR     R1, [R4]
@@ -588,7 +633,7 @@ phase_strict_gba:
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     CHECK_EQ 0x0A, R4
 
-    MOV     R4, #0x0E000000      @ Cart halfword load (8-bit two-beat).
+    MOV     R4, #0x0E000000      @ Cart RAM halfword uses two byte beats.
     ADD     R4, R4, #0x110
     LOADH   R1, 0xBEEF
     STRH    R1, [R4]
@@ -596,7 +641,7 @@ phase_strict_gba:
     LOADH   R1, 0xBEEF
     CHECK_EQ 0x0B, R4
 
-    MOV     R4, #0x0E000000      @ Cart signed halfword load (8-bit two-beat).
+    MOV     R4, #0x0E000000      @ Cart RAM signed halfword assembly.
     ADD     R4, R4, #0x118
     LOADH   R1, 0x80F0
     STRH    R1, [R4]
@@ -606,37 +651,36 @@ phase_strict_gba:
 
 @ ==============================================================================
 @ PHASE 9 - multiple (burst) store/read to SDRAM-backed EWRAM
-@ STM/STR-multiple and LDM keep the region enable asserted across consecutive
-@ beats with no instruction fetch between them, so this is the only stimulus
-@ that drives the SDRAM wrapper's per-beat handshake (sdram_controller_top.v).
+@ STM and LDM issue consecutive word accesses with no instruction fetch between
+@ them. This drives the SDRAM wrapper's per-beat handshake
+@ (sdram_controller_top.v).
 @ A dropped or stale beat shows up as a wrong/repeated value at one address.
-@ EWRAM is 16-bit-backed here, so the four word values keep their high half
-@ zero to survive the halfword path; distinct low halves catch mis-ordered or
-@ stale beats. PAK_ROM (0x08000000) is the same wrapper path.
+@ Every word has distinct, non-zero upper and lower halfwords so either missing
+@ half-beat is observable.
 @ ==============================================================================
 phase_sdram_burst:
     MOV     R7, #9
     MOV     R4, #0x02000000
     ADD     R4, R4, #0x600        @ isolated EWRAM burst window
 
-    LOADH   R0, 0x0AA0
-    LOADH   R1, 0x0BB1
-    LOADH   R2, 0x0CC2
-    LOADH   R3, 0x0DD3
+    LOADW   R0, 0xA0, 0x01, 0x0A, 0xA0
+    LOADW   R1, 0xB1, 0x02, 0x0B, 0xB1
+    LOADW   R2, 0xC2, 0x03, 0x0C, 0xC2
+    LOADW   R3, 0xD3, 0x04, 0x0D, 0xD3
     STMIA   R4, {R0-R3}           @ four gap-less SDRAM stores
 
 @ ---- verify each store beat landed at its own address -----------------------
     LDR     R2, [R4]
-    LOADH   R1, 0x0AA0
+    LOADW   R1, 0xA0, 0x01, 0x0A, 0xA0
     CHECK_EQ 0x01, R4
     LDR     R2, [R4, #4]
-    LOADH   R1, 0x0BB1
+    LOADW   R1, 0xB1, 0x02, 0x0B, 0xB1
     CHECK_EQ 0x02, R4
     LDR     R2, [R4, #8]
-    LOADH   R1, 0x0CC2
+    LOADW   R1, 0xC2, 0x03, 0x0C, 0xC2
     CHECK_EQ 0x03, R4
     LDR     R2, [R4, #12]
-    LOADH   R1, 0x0DD3
+    LOADW   R1, 0xD3, 0x04, 0x0D, 0xD3
     CHECK_EQ 0x04, R4
 
 @ ---- multiple read back via LDM, then verify each loaded register ------------
@@ -644,30 +688,27 @@ phase_sdram_burst:
 @ so they can be checked after the burst without being overwritten.
     LDMIA   R4, {R0, R3, R5, R6}  @ four gap-less SDRAM loads
     MOV     R2, R0
-    LOADH   R1, 0x0AA0
+    LOADW   R1, 0xA0, 0x01, 0x0A, 0xA0
     CHECK_EQ 0x05, R4
     MOV     R2, R3
-    LOADH   R1, 0x0BB1
+    LOADW   R1, 0xB1, 0x02, 0x0B, 0xB1
     CHECK_EQ 0x06, R4
     MOV     R2, R5
-    LOADH   R1, 0x0CC2
+    LOADW   R1, 0xC2, 0x03, 0x0C, 0xC2
     CHECK_EQ 0x07, R4
     MOV     R2, R6
-    LOADH   R1, 0x0DD3
+    LOADW   R1, 0xD3, 0x04, 0x0D, 0xD3
     CHECK_EQ 0x08, R4
 
 @ ==============================================================================
 @ PHASE 10 - explicit word / halfword / byte load+store width & sign coverage
-@ Fills the load-side gaps left by phases 1-9 on paths the RTL claims to support,
-@ so a failure here is a real regression (the strict narrow-port split-load
-@ probes live in phase 8). Three blocks:
-@   WORD     - store 0x89ABCDEF and load it whole; the non-zero high half catches
-@              a stuck-zero or mis-assembled upper word on the SDRAM two-beat
-@              path (phase 9 cannot, its burst values keep the high half zero).
+@ Fills the load-side gaps left by phases 1-9 using GBA internal-memory widths
+@ plus the loader-facing writable cartridge-storage widths implemented here.
+@   WORD     - EWRAM and writable PAK_ROM store/read assembly.
 @   HALFWORD - LDRSH must sign-extend bit 15; only PAL/VRAM tested this before.
 @   BYTE     - LDRSB must sign-extend bit 7 on the SDRAM, 32-bit and 8-bit ports.
-@ All accesses are naturally aligned (a misaligned half/word would stall a
-@ narrow-port FSM without advancing and hang instead of reporting).
+@ All accesses are naturally aligned; unaligned ARM7TDMI behavior is outside
+@ this memory-map diagnostic.
 @ ==============================================================================
 phase_ldst_widths:
     MOV     R7, #10
@@ -681,7 +722,7 @@ phase_ldst_widths:
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     CHECK_EQ 0x01, R4
 
-    MOV     R4, #0x08000000      @ PAK_ROM word (SDRAM two-beat).
+    MOV     R4, #0x08000000      @ Writable PAK_ROM word (SDRAM two-beat).
     ADD     R4, R4, #0x4000
     LOADW   R1, 0x89, 0xAB, 0xCD, 0xEF
     STR     R1, [R4]
