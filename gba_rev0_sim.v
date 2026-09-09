@@ -135,6 +135,7 @@ wire [31:0] data_dma0;
 wire        rden_bios;
 wire        rden_ewram;
 wire        rden_iwram;
+wire        rden_ioram;
 wire        rden_palram;
 wire        rden_vram;
 wire        rden_oam;
@@ -218,6 +219,7 @@ bus_controller bus_controller(
 	// input
 	.rd_addr	(addr_bus),
 	.nRW 	 	(nRW),
+	.request	(1'b1),
 
 	.data_bios   (data_bios),
 	.data_ewram  (data_ewram),
@@ -227,8 +229,9 @@ bus_controller bus_controller(
 	.data_vram	 (data_vram),
 	.data_oam	 (data_oam),
 	.data_pakrom (data_pakrom),
-	.data_cartram(data_cartram),
-	.data_main	 (data_main),
+		.data_cartram(data_cartram),
+		.data_main	 (data_main),
+		.data_open_bus (32'd0),
 
 	// output
 	.data_o		(data_bus),
@@ -236,6 +239,7 @@ bus_controller bus_controller(
 	.rden_bios		(rden_bios),
 	.rden_ewram		(rden_ewram),
 	.rden_iwram		(rden_iwram),
+	.rden_ioram		(rden_ioram),
 	.rden_palram	(rden_palram),
 	.rden_vram		(rden_vram),
 	.rden_oam		(rden_oam),
@@ -271,6 +275,12 @@ bus_arbiter bus_arbiter (
     .MAS_dma2      (),
     .MAS_dma3      (),
 
+    .SEQ_cpu       (1'b0),
+    .SEQ_dma0      (1'b0),
+    .SEQ_dma1      (1'b0),
+    .SEQ_dma2      (1'b0),
+    .SEQ_dma3      (1'b0),
+
     .nRW_CPU       (nRW_CPU),
     .wr_en_dma     (wr_en_dma0),
     .dma_active    (dma_active),
@@ -278,6 +288,7 @@ bus_arbiter bus_arbiter (
     .addr_o        (addr_bus),
     .data_o        (data_main),
     .MAS           (MAS),
+    .SEQ           (),
     .nRW           (nRW)
 );
 
@@ -314,10 +325,16 @@ bios #(
     .INIT_FILE (INIT_FILE)
 ) bios (
     .clk	(clock_n),
-    .addr	(addr_bus[13:2]),        // word address (4096 32-bit words = 16 KB)
-    .rdata	(data_bios),
-    .rden	(rden_bios)
-);
+	    .addr	(addr_bus[13:0]),  // byte address within the 16 KiB BIOS
+	    .rdata	(data_bios),
+	    .rden	(rden_bios),
+	    .size	(MAS),
+	    .sign_extend (sign_extend),
+	    .access_allowed (1'b1),
+	    .opcode_fetch (1'b1),
+	    .ready (),
+	    .misalign_fault ()
+	);
 
 // External Work RAM - 16bit
 ewram ewram (
@@ -403,10 +420,13 @@ io_registers io_registers (
     .clk	(clock_n),
     .reset_n	(nrst),
     //---------------- CPU bus ----------------
-    .addr	(addr_bus[9:0]),       // byte address within 1 KB IO space
+    .addr	(addr_bus[11:0]),      // byte address within the IO aperture
     .wdata	(data_bus),
+    .open_bus_i (32'd0),
+    .system_write_enable_i (1'b1),
     .rdata	(data_ioram),
     .we		(we_ioram),
+    .rden   (rden_ioram),
     .size	(MAS),             // 00=byte 01=half 10=word
     .sign_extend (sign_extend),
     .ready	(),
@@ -424,6 +444,11 @@ io_registers io_registers (
     .serial_data1_i (16'd0),   // SCD1
     .serial_data2_i (16'd0),   // SCD2
     .serial_data3_i (16'd0),   // SCD3
+    .tm0_count_i (16'd0), .tm0_control_i (16'd0),
+    .tm1_count_i (16'd0), .tm1_control_i (16'd0),
+    .tm2_count_i (16'd0), .tm2_control_i (16'd0),
+    .tm3_count_i (16'd0), .tm3_control_i (16'd0),
+    .dma_disable_i (4'b0000),
     //---------------- Direct Sound FIFO write strobes ----------------
     //  No sound DMA path wired yet — leave outputs open.
     .fifo_a_we_o	(),
@@ -481,7 +506,9 @@ io_registers io_registers (
     .ie_o		(),
     .if_o		(),
     .wscnt_o	(),
-    .ime_o		()
+    .ime_o		(),
+    .halt_request_o (),
+    .postflg_o ()
 );
 
 // DMA0 channel. Single instance for now (default param targets DMA0 at 0x040000BA)

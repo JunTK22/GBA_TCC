@@ -5,9 +5,18 @@
 //  Holds the fetch/decode registers, checks ARM condition codes, decodes ARM and
 //  Thumb instruction classes, and drives the core datapath control signals. The
 //  `cycle_count` / `cycles_types` shift registers sequence multi-cycle loads,
-//  stores, multiplies, branches, block transfers, and exception entry. Active-low
-//  IRQ/FIQ plus ABORT/reset requests are sampled here and converted into the
-//  exception vector sequence consumed by `reg_bank` and `arm7tdmi_top`.
+//  stores, register shifts, multiplies, branches, block transfers, pipeline
+//  refills, and exception entry.
+//
+//  The same sequence describes the external S/N/I/C bus phases through nMREQ,
+//  nOPC, and SEQ. Normal ARM loads preserve the prefetched following opcode;
+//  completed data transfers mark the next opcode fetch non-sequential. Branch,
+//  BX, load-to-PC, POP-to-PC, and exception refills distinguish the discarded
+//  old-address fetch from the target N cycle and following S cycle.
+//
+//  Active-low IRQ/FIQ plus ABORT/reset requests are sampled here and converted
+//  into the vector sequence consumed by `reg_bank` and `arm7tdmi_top`. BX target
+//  bit 0 selects both the restored instruction width and refill alignment.
 // =============================================================================
 
 module decoder(
@@ -31,6 +40,7 @@ module decoder(
 
 	input	wire [3:0]	nzcv, //nzcv coming directly from ALU
 	input	wire [3:0]	reg_cond_field, //reg condition field
+	input	wire		bx_target_thumb, // BX operand bit 0 selects the refill width
 
 	// Data coming from memory due to a LDR	
 	output	reg [31:0]	Data_o = 0,
@@ -55,7 +65,7 @@ module decoder(
     output reg  [1:0]  MAS = 2'b10,          // Memory access size (word/half/byte)
     output wire        nMREQ,        // Not memory request
     output wire        SEQ,          // Sequential address
-    output reg         nOPC = 0,         // Not opcode fetch
+    output wire        nOPC,             // Not opcode fetch
     output reg         nTRANS = 0,       // Not translate (user mode indicator)
 
 	// Enable signal for modules and registers
@@ -208,6 +218,8 @@ reg set_multi_cycle = 0;
 
 reg pipeline_halt_r = 0;
 reg wait_f = 0;
+reg [31:0] arm_load_prefetch_reg = 32'hE1A00000;
+reg arm_post_data_nonseq = 0;
 
 wire [1:0] special_flow;
 wire [4:0] reg_list_ones;
@@ -240,8 +252,102 @@ reg [63:0] i0  = 0;
 
 assign special_flow = cycle_count[1:0];
 
-assign nMREQ	= cycles_types[1];
-assign SEQ		= (cycles_types[1:0] == 2'b00) ? 1'b1 : ((cycles_types[1:0] == 2'b11) ? 1'b1 : 1'b0);
+// Normal ARM loads keep the immediately following instruction in
+// instruct_reg while fetching the subsequent opcode ahead of the data cycle.
+// Loads which write PC use their separate five-cycle refill sequence.
+wire normal_arm_single_load = Load_f &&
+                              ((Inst_decoded_o == HW_LS) ||
+                               (Inst_decoded_o == SD_LS)) &&
+                              (instruct_dec[15:12] != 4'b1111);
+wire normal_arm_single_store = !Load_f &&
+                               ((Inst_decoded_o == HW_LS) ||
+                                (Inst_decoded_o == SD_LS));
+wire normal_thumb_single_transfer =
+    (Inst_decoded_o == Pc_r_L)       ||
+    (Inst_decoded_o == LS_Reg_Off)   ||
+    (Inst_decoded_o == LS_SignEx_HW) ||
+    (Inst_decoded_o == LS_Imm_Off)   ||
+    (Inst_decoded_o == HW_LS_T)      ||
+    (Inst_decoded_o == SP_rel_LS);
+wire arm_register_shift_decode = !instruct_reg[25] && instruct_reg[4];
+wire thumb_register_shift_decode = (instruct_reg[9:6] == 4'd2) ||
+                                   (instruct_reg[9:6] == 4'd3) ||
+                                   (instruct_reg[9:6] == 4'd4) ||
+                                   (instruct_reg[9:6] == 4'd7);
+wire arm_register_shift_active = (Inst_decoded_o == DP) &&
+                                 !instruct_dec[25] && instruct_dec[4];
+wire thumb_register_shift_active = (Inst_decoded_o == Alu_OP) &&
+                                    ((instruct_dec[9:6] == 4'd2) ||
+                                     (instruct_dec[9:6] == 4'd3) ||
+                                     (instruct_dec[9:6] == 4'd4) ||
+                                     (instruct_dec[9:6] == 4'd7));
+wire register_shift_follow_cycle = (cycle_count == 1) &&
+                                   (thumb_register_shift_active ||
+                                    (arm_register_shift_active &&
+                                     (instruct_dec[15:12] != 4'b1111)));
+wire arm_load_opcode_prefetch = normal_arm_single_load &&
+                                (cycle_count[2:0] == 3'b111);
+
+wire three_cycle_refill =
+    ((Inst_decoded_o == DP) && (instruct_dec[15:12] == 4'b1111)) ||
+    (Inst_decoded_o == BranchX) ||
+    (Inst_decoded_o == Branch) ||
+    ((Inst_decoded_o == Hi_op_BranchX) &&
+     (instruct_dec[9:8] == 2'b11)) ||
+    (Inst_decoded_o == Cond_Branch) ||
+    (Inst_decoded_o == Uncon_Branch) ||
+    ((Inst_decoded_o == L_Branch_Link) && instruct_dec[11]) ||
+    (Inst_decoded_o == exception);
+wire refill_old_address = three_cycle_refill &&
+                          (cycle_count[2:0] == 3'b111);
+wire refill_target_address = three_cycle_refill &&
+                             (cycle_count[2:0] == 3'b011);
+
+// The internal cycle tuple also controls the fetch-register hold. Keep that
+// sequencing intact, but align the external bus classification with the
+// registered address: S at the discarded old prefetch, N at the new target,
+// then S at target+width. Exception tuples use I internally on the first phase,
+// so explicitly expose the architecturally required old-address prefetch.
+assign nMREQ = ((Inst_decoded_o == exception) && refill_old_address)
+             ? 1'b0 : cycles_types[1];
+assign SEQ = arm_post_data_nonseq ? 1'b0 :
+             refill_old_address ? 1'b1 :
+             refill_target_address ? 1'b0 :
+             ((cycles_types[1:0] == S) ||
+              (cycles_types[1:0] == C));
+
+// The first load phase inherits the current opcode-stream classification.
+// A preceding load leaves an I phase, so consecutive loads correctly start
+// their opcode prefetch with an N cycle.
+wire [1:0] arm_load_first_cycle = SEQ ? S : N;
+
+wire data_memory_sequence = (Inst_decoded_o == SD_Swap)       ||
+                            (Inst_decoded_o == HW_LS)         ||
+                            (Inst_decoded_o == SD_LS)         ||
+                            (Inst_decoded_o == BD_LS)         ||
+                            (Inst_decoded_o == Pc_r_L)        ||
+                            (Inst_decoded_o == LS_Reg_Off)    ||
+                            (Inst_decoded_o == LS_SignEx_HW)  ||
+                            (Inst_decoded_o == LS_Imm_Off)    ||
+                            (Inst_decoded_o == HW_LS_T)       ||
+                            (Inst_decoded_o == SP_rel_LS)     ||
+                            (Inst_decoded_o == Push_Pop_Reg)  ||
+                            (Inst_decoded_o == Multi_LS);
+wire read_data_sequence = Load_f                     ||
+                          (Inst_decoded_o == Pc_r_L) ||
+                          (Inst_decoded_o == SD_Swap);
+wire load_pc_refill = !pipeline_halt_r && Load_f &&
+                      ((((Inst_decoded_o == HW_LS) ||
+                         (Inst_decoded_o == SD_LS)) &&
+                        (instruct_dec[15:12] == 4'b1111)) ||
+                       ((Inst_decoded_o == BD_LS) && instruct_dec[15]) ||
+                       ((Inst_decoded_o == Push_Pop_Reg) &&
+                        instruct_dec[8]));
+
+assign nOPC = register_shift_follow_cycle ? 1'b1 :
+              arm_load_opcode_prefetch ? 1'b0 :
+              data_memory_sequence &&
+              (core_nRW || read_data_sequence) && !load_pc_refill;
 
 wire thumb_state;
 assign thumb_state = CPSR[5];
@@ -284,10 +390,31 @@ always @(posedge CLK or negedge nrst) begin // Fetch Register
 	// Instruction hE1A00000 -> MOV R0, R0 (NOP)
 	if (~nrst) begin
 		instruct_reg <= 32'hE1A00000;
+		arm_load_prefetch_reg <= 32'hE1A00000;
 	end else begin
-		if (pipeline_halt_r) instruct_reg <= instruct_reg;
-		else instruct_reg <= thumb_state ? Data_i[15:0] : Data_i;
+		if (arm_load_opcode_prefetch)
+			arm_load_prefetch_reg <= Data_i;
+
+		if (pipeline_halt_r)
+			instruct_reg <= instruct_reg;
+		else if (normal_arm_single_load && (cycle_count == 1))
+			instruct_reg <= arm_load_prefetch_reg;
+		else
+			instruct_reg <= thumb_state ? Data_i[15:0] : Data_i;
 	end
+end
+
+// A data transfer breaks the sequential opcode stream. Hold this qualifier
+// across any nWAIT stretch and consume it on the next accepted opcode request.
+always @(posedge CLK or negedge nrst) begin
+	if (~nrst)
+		arm_post_data_nonseq <= 1'b0;
+	else if ((normal_arm_single_load || normal_arm_single_store ||
+	          normal_thumb_single_transfer) &&
+	         (cycle_count == 1))
+		arm_post_data_nonseq <= 1'b1;
+	else if (arm_post_data_nonseq && !nMREQ && !nOPC)
+		arm_post_data_nonseq <= 1'b0;
 end
 
 // Exception registers
@@ -316,6 +443,19 @@ wire [2:0] exception_type_w =   RST_r 			 	? 3'd0
 							  : 3'd5;
 //////////////////////////
 
+wire single_store_sequence = !Load_f &&
+                             ((Inst_decoded_o == HW_LS)      ||
+                              (Inst_decoded_o == SD_LS)      ||
+                              (Inst_decoded_o == LS_Reg_Off) ||
+                              (Inst_decoded_o == LS_SignEx_HW) ||
+                              (Inst_decoded_o == LS_Imm_Off) ||
+                              (Inst_decoded_o == HW_LS_T)    ||
+                              (Inst_decoded_o == SP_rel_LS));
+wire multiple_store_sequence = !Load_f &&
+                               ((Inst_decoded_o == BD_LS) ||
+                                (Inst_decoded_o == Push_Pop_Reg) ||
+                                (Inst_decoded_o == Multi_LS));
+
 always @(*) begin
 	// Instruction Decoding
 	if (thumb_state == 0) begin
@@ -341,7 +481,7 @@ always @(*) begin
 			//Data Processing
 			if (instruct_reg[25:23] == 3'b010 && instruct_reg[21:16] == 6'b001111) begin
 				Inst_decoded = MRS;
-			end else if (instruct_reg[24:23] == 2'b10 && instruct_reg[21:17] == 5'b10100 && instruct_reg[15:12] == 4'b1111) begin
+			end else if (instruct_reg[24:23] == 2'b10 && instruct_reg[21:20] == 2'b10 && instruct_reg[15:12] == 4'b1111) begin
 				Inst_decoded = MSR;
 			end else begin
 				Inst_decoded = DP;
@@ -422,7 +562,7 @@ always @(posedge CLK) begin
 		Shifter_reg_f	 <= 0;
 		signEx_f		 <= 0;
 		wait_f			 <= 0;
-		MAS		 		 <= 2'b10;
+			MAS		 		 <= thumb_state ? 2'b01 : 2'b10;
 
 		Wr_Data_reg_en	<= 0;
 		Reg_bank_en		<= 0;
@@ -434,7 +574,7 @@ always @(posedge CLK) begin
 
 		core_nRW <= 0;
 
-		Addr_reg_sel <= Incrementer_bus;
+			Addr_reg_sel <= Incrementer_bus;
 		Bus_A_sel <= Rn;
 		Bus_B_sel <= Rm;
 		Wr_Data_reg_sel <= Reg_Bank;
@@ -528,7 +668,7 @@ always @(posedge CLK) begin
 
 		core_nRW <= 0;
 
-		Addr_reg_sel <= Incrementer_bus;
+			Addr_reg_sel <= Incrementer_bus;
 		Bus_A_sel <= Rn;
 		Bus_B_sel <= Rm;
 		Wr_Data_reg_sel <= Reg_Bank;
@@ -563,18 +703,31 @@ always @(posedge CLK) begin
 			case (Inst_decoded)
 			// ARM Instructions
 				DP: begin
-					cycle_count		<= (instruct_reg[15:12] == 15) ? 3'b111 : 1'b0;
-					cycles_types	<= (instruct_reg[15:12] == 15) ? {S,S,N} : 1'b0;
-					
+					if (instruct_reg[15:12] == 15) begin
+						cycle_count <= arm_register_shift_decode ? 4'b1111 : 3'b111;
+						cycles_types <= arm_register_shift_decode ? {S,S,N,I} : {S,S,N};
+					end else if (arm_register_shift_decode) begin
+						cycle_count <= 2'b11;
+						cycles_types <= {S,I};
+					end else begin
+						cycle_count <= 1'b0;
+						cycles_types <= 1'b0;
+					end
+					if (instruct_reg[20] && (instruct_reg[15:12] == 4'b1111))
+						MAS <= SPSR[5] ? 2'b01 : 2'b10;
+
 					set_condition_f <= instruct_reg[20];
 					Imm_Operand_f	<= instruct_reg[25];
 					Shifter_reg_f	<= instruct_reg[4];
 	
-					Reg_bank_en		<= (instruct_reg[24:21] == TST || instruct_reg[24:21] == TEQ || instruct_reg[24:21] == CMP || instruct_reg[24:21] == CMN) ? 1'b0 : 1'b1;
+					Reg_bank_en		<= arm_register_shift_decode ? 1'b0 :
+									   (instruct_reg[24:21] == TST || instruct_reg[24:21] == TEQ || instruct_reg[24:21] == CMP || instruct_reg[24:21] == CMN) ? 1'b0 : 1'b1;
 					B_shifter_en	<= 1;
 					Bus_B_sel		<= instruct_reg[25] ? Immediate : Rm;
-					Addr_reg_sel	<= (instruct_reg[15:12] == 4'b1111) ? ALU_bus : Incrementer_bus;
-					PSR_wr_en 		<= instruct_reg[20];
+						Addr_reg_sel	<= (instruct_reg[15:12] == 4'b1111 &&
+						                    !arm_register_shift_decode)
+						                ? ALU_bus : Incrementer_bus;
+					PSR_wr_en 		<= arm_register_shift_decode ? 1'b0 : instruct_reg[20];
 
 					opcode_o		<= instruct_reg[24:21];
 					Rn_o			<= instruct_reg[19:16];
@@ -681,8 +834,8 @@ always @(posedge CLK) begin
 					Rm_o			<= instruct_reg[3:0];
 				end
 				HW_LS: begin
-					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 3'b111;
-					cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {S,N,I}) : {N,N};
+					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 2'b11;
+				cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {I,N,arm_load_first_cycle}) : {N,N};
 
 					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
 					Sign_f			<= instruct_reg[6];
@@ -691,6 +844,8 @@ always @(posedge CLK) begin
 					Pre_Pos_Indx_f	<= instruct_reg[24];
 					Up_Down_f		<= instruct_reg[23];
 					Write_Back_f	<= instruct_reg[21];
+				if (instruct_reg[20] &&
+				    (instruct_reg[15:12] == 4'b1111))
 					MAS				<= instruct_reg[5] ? 2'b01 : 2'b00;
 
 					// Add/Sub Rn +- Offset into Addr register if pre indexing. The sum is always written into a Writeback_reg.
@@ -707,8 +862,8 @@ always @(posedge CLK) begin
 					Imm_o			<= {instruct_reg[11:8], instruct_reg[3:0]};
 				end
 				SD_LS: begin
-					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 3'b111;
-					cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {S,N,I}) : {N,N};
+					cycle_count		<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? 5'b11111 : 3'b111) : 2'b11;
+				cycles_types	<= instruct_reg[20] ? ((instruct_reg[15:12] == 15) ? {S,S,N,N,I} : {I,N,arm_load_first_cycle}) : {N,N};
 
 					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
 					Imm_Operand_f	<= ~instruct_reg[25];
@@ -717,6 +872,8 @@ always @(posedge CLK) begin
 					Pre_Pos_Indx_f	<= instruct_reg[24];
 					Up_Down_f		<= instruct_reg[23];
 					Write_Back_f	<= instruct_reg[21];
+				if (instruct_reg[20] &&
+				    (instruct_reg[15:12] == 4'b1111))
 					MAS				<= instruct_reg[22] ? 2'b00 : 2'b10;
 
 					// Add/Sub Rn +- Offset into Addr register if pre indexing. The sum is always written into a Writeback_reg.
@@ -767,7 +924,7 @@ always @(posedge CLK) begin
 	    			Imm_o        <= {19'b0, 3'd1, 2'b00};
 				end
 				BD_LS: begin
-					cycle_count		<=	(instruct_reg[20] ? (instruct_reg[15] ? 4'b1111 : 4'b0011) : 4'b0011) << reg_list_ones | ((8'b0 | 1'b1) << reg_list_ones)-1'b1;
+					cycle_count		<=	(instruct_reg[20] ? (instruct_reg[15] ? 4'b1111 : 4'b0011) : 1'b1) << reg_list_ones | ((8'b0 | 1'b1) << reg_list_ones)-1'b1;
 					cycles_types	<=	instruct_reg[20] ? (instruct_reg[15] ? {S,N,N,I} : {N,I}) : {N,N};
 
 					opcode_o		<= instruct_reg[23] ? ADD : SUB; // Rn +- Imm (Offset)
@@ -902,7 +1059,7 @@ always @(posedge CLK) begin
 
 					set_condition_f <= 1;
 					PSR_wr_en		<= 1;
-					Reg_bank_en  	<= 1;
+					Reg_bank_en  	<= (instruct_reg[12:11] != 2'b01);
 					Bus_B_sel 		<= Immediate;
 
 					Rd_o			<= instruct_reg[10:8];
@@ -911,6 +1068,11 @@ always @(posedge CLK) begin
 				end
 				Alu_OP: begin
 					Reg_bank_en <= 1;
+					if (thumb_register_shift_decode) begin
+						cycle_count <= 2'b11;
+						cycles_types <= {S,I};
+						Reg_bank_en <= 0;
+					end
 					case (instruct_reg[9:6])
 						4'd0: opcode_o <= AND;
 						4'd1: opcode_o <= EOR;
@@ -969,11 +1131,15 @@ always @(posedge CLK) begin
 					endcase
 					
 					set_condition_f <= 1;
-					PSR_wr_en		<= 1;
+					PSR_wr_en		<= !thumb_register_shift_decode;
 
 					Rd_o			<= instruct_reg[2:0];
 					Rn_o			<= instruct_reg[2:0];
-					Rm_o			<= instruct_reg[5:3];
+					Rm_o			<= ((instruct_reg[9:6] == 4'd2) ||
+									(instruct_reg[9:6] == 4'd3) ||
+									(instruct_reg[9:6] == 4'd4) ||
+									(instruct_reg[9:6] == 4'd7))
+									? instruct_reg[2:0] : instruct_reg[5:3];
 				end
 				Hi_op_BranchX: begin
 					H1_f			<= instruct_reg[7];
@@ -1012,21 +1178,19 @@ always @(posedge CLK) begin
 				end
 				Pc_r_L: begin
 					cycle_count		<= 3'b111;
-					cycles_types	<= {S,N,I};
+				cycles_types	<= {N,N,I};
 
 					opcode_o		<= ADD; // Rn + Rm (Offset)
-					Addr_reg_sel	<= ALU_bus;
-					Bus_A_sel 		<= Rn;
-					Bus_B_sel 		<= Immediate;
-					MAS				<= 2'b10;
-
-					Rd_o			<= instruct_reg[10:8];
+				Addr_reg_sel	<= ALU_bus;
+				Bus_A_sel 		<= Rn;
+				Bus_B_sel 		<= Immediate;
+				Rd_o			<= instruct_reg[10:8];
 					Rn_o			<= 4'b1111;
 					Imm_o			<= {instruct_reg[7:0], 2'b00};
 				end
 				LS_Reg_Off: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
-					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+				cycles_types	<= instruct_reg[11] ? {N,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Rm (Offset)
 					Wr_Data_reg_en	<= ~instruct_reg[11];
@@ -1034,18 +1198,16 @@ always @(posedge CLK) begin
 					Bus_A_sel 		<= Rn;
 					Bus_B_sel 		<= Rm;
 
-					Load_f 			<= instruct_reg[11];
-					Byte_Word_f 	<= instruct_reg[10];
-					MAS				<= {~instruct_reg[10], 1'b0};
-
-					Rd_o			<= instruct_reg[2:0];
+				Load_f 			<= instruct_reg[11];
+				Byte_Word_f 	<= instruct_reg[10];
+				Rd_o			<= instruct_reg[2:0];
 					Rn_o			<= instruct_reg[5:3];
 					Rm_o			<= instruct_reg[8:6];
 					Rs_o			<= instruct_reg[2:0];
 				end
 				LS_SignEx_HW: begin
-					cycle_count		<= instruct_reg[11] || instruct_reg[10] ? 3'b111 : 3'b111;
-					cycles_types	<= instruct_reg[11] || instruct_reg[10] ? {S,N,I} : {N,N};
+					cycle_count		<= (instruct_reg[11] || instruct_reg[10]) ? 3'b111 : 2'b11;
+				cycles_types	<= instruct_reg[11] || instruct_reg[10] ? {N,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Rm (Offset)
 					Wr_Data_reg_en	<= ~instruct_reg[11];
@@ -1053,19 +1215,17 @@ always @(posedge CLK) begin
 					Bus_A_sel 		<= Rn;
 					Bus_B_sel 		<= Rm;
 
-					HW_Byte_f		<= ~(~instruct_reg[11] && instruct_reg[10]);
-					Load_f 			<= instruct_reg[11] || instruct_reg[10];
-					Sign_f			<= instruct_reg[10];
-					MAS				<= {1'b0, ~(~instruct_reg[11] && instruct_reg[10])};
-
-					Rn_o			<= instruct_reg[8:6];
+				HW_Byte_f		<= ~(~instruct_reg[11] && instruct_reg[10]);
+				Load_f 			<= instruct_reg[11] || instruct_reg[10];
+				Sign_f			<= instruct_reg[10];
+				Rn_o			<= instruct_reg[8:6];
 					Rd_o			<= instruct_reg[2:0];
 					Rm_o			<= instruct_reg[5:3];
 					Rs_o			<= instruct_reg[2:0];
 				end
 				LS_Imm_Off: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
-					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+				cycles_types	<= instruct_reg[11] ? {N,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Imm (Offset)
 					Wr_Data_reg_en	<= ~instruct_reg[11];
@@ -1073,18 +1233,16 @@ always @(posedge CLK) begin
 					Bus_A_sel 		<= Rn;
 					Bus_B_sel 		<= Immediate;
 
-					Load_f 			<= instruct_reg[11];
-					Byte_Word_f 	<= instruct_reg[12];
-					MAS				<= {~instruct_reg[12], 1'b0};
-					
-					Rd_o			<= instruct_reg[2:0];
+				Load_f 			<= instruct_reg[11];
+				Byte_Word_f 	<= instruct_reg[12];
+				Rd_o			<= instruct_reg[2:0];
 					Rn_o			<= instruct_reg[5:3];
 					Imm_o			<= instruct_reg[12] ? instruct_reg[10:6] : {instruct_reg[10:6], 2'b00};
 					Rs_o			<= instruct_reg[2:0];
 				end
 				HW_LS_T: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
-					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+				cycles_types	<= instruct_reg[11] ? {N,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Imm (Offset)
 					Wr_Data_reg_en	<= ~instruct_reg[11];
@@ -1092,17 +1250,15 @@ always @(posedge CLK) begin
 					Bus_A_sel 		<= Rn;
 					Bus_B_sel 		<= Immediate;
 
-					Load_f 			<= instruct_reg[11];
-					MAS				<= 2'b01;
-
-					Rd_o			<= instruct_reg[2:0];
+				Load_f 			<= instruct_reg[11];
+				Rd_o			<= instruct_reg[2:0];
 					Rn_o			<= instruct_reg[5:3];
 					Imm_o			<= {instruct_reg[10:6], 1'b0};
 					Rs_o			<= instruct_reg[2:0];
 				end
 				SP_rel_LS: begin
-					cycle_count		<= instruct_reg[11] ? 3'b111 : 3'b111;
-					cycles_types	<= instruct_reg[11] ? {S,N,I} : {N,N};
+					cycle_count		<= instruct_reg[11] ? 3'b111 : 2'b11;
+				cycles_types	<= instruct_reg[11] ? {N,N,I} : {N,N};
 
 					opcode_o		<= ADD; // Rn + Imm (Offset)
 					Wr_Data_reg_en	<= ~instruct_reg[11];
@@ -1110,10 +1266,8 @@ always @(posedge CLK) begin
 					Bus_A_sel 		<= Rn;
 					Bus_B_sel 		<= Immediate;
 
-					Load_f 			<= instruct_reg[11];
-					MAS				<= 2'b10;
-
-					Rd_o			<= instruct_reg[10:8];
+				Load_f 			<= instruct_reg[11];
+				Rd_o			<= instruct_reg[10:8];
 					Rn_o			<= 4'b1101; // R13
 					Imm_o			<= {instruct_reg[7:0], 2'b00};
 					Rs_o			<= instruct_reg[10:8];
@@ -1143,7 +1297,7 @@ always @(posedge CLK) begin
 					//            POP  (L=1, bit11=1) -> LDMFD SP~, {Rlist, [PC]} (post-increment)
 					// Number of transfers = popcount(bits[7:0]) + (R bit ? 1 : 0).
 					// LR/PC is appended at the end of the chain via the i8 slot (see i0 chain below).
-					cycle_count		<=	(instruct_reg[11] ? (instruct_reg[8] ? 4'b1111 : 4'b0011) : 4'b0011)
+					cycle_count		<=	(instruct_reg[11] ? (instruct_reg[8] ? 4'b1111 : 4'b0011) : 1'b1)
 												<< (thumb_reg_list_ones + instruct_reg[8])
 											| (((20'b0 | 1'b1) << (thumb_reg_list_ones + instruct_reg[8])) - 1'b1);
 					cycles_types	<=	instruct_reg[11] ? (instruct_reg[8] ? {S,N,N,I} : {N,I}) : {N,N};
@@ -1155,7 +1309,8 @@ always @(posedge CLK) begin
 					Write_Back_f	<= 1;
 					PC_LR_f			<= instruct_reg[8];
 					wait_f			<= 1;
-					MAS				<= 2'b10;
+					if (instruct_reg[11])
+						MAS				<= 2'b10;
 
 					Wr_Data_reg_en	<= ~instruct_reg[11]; // PUSH (L=0): latch register data for store
 					Addr_reg_sel	<= instruct_reg[11] ? Rn_bus : ALU_bus;
@@ -1172,7 +1327,7 @@ always @(posedge CLK) begin
 				Multi_LS: begin
 					// Format 15: LDMIA/STMIA Rb~, {Rlist}. bit11=L, bits[10:8]=Rb, bits[7:0]=Rlist.
 					// Always post-increment, write-back, user-mode (S=0). PC cannot be in Rlist.
-					cycle_count		<=	4'b0011 << thumb_reg_list_ones
+					cycle_count		<=	(instruct_reg[11] ? 4'b0011 : 1'b1) << thumb_reg_list_ones
 											| (((20'b0 | 1'b1) << thumb_reg_list_ones) - 1'b1);
 					cycles_types	<=	instruct_reg[11] ? {N,I} : {N,N};
 
@@ -1182,7 +1337,8 @@ always @(posedge CLK) begin
 					Pre_Pos_Indx_f	<= 1'b0;
 					Write_Back_f	<= 1'b1;
 					wait_f			<= 1;
-					MAS				<= 2'b10;
+					if (instruct_reg[11])
+						MAS				<= 2'b10;
 
 					Wr_Data_reg_en	<= ~instruct_reg[11]; // STMIA (L=0): latch register data for store
 					Addr_reg_sel	<= Rn_bus; // first cycle: load addr from Rb
@@ -1218,7 +1374,7 @@ always @(posedge CLK) begin
 					//cycle_count 	<= 3'b111;
 					//cycles_types	<= {S,S,N};
 					cycle_count    <= 4'b111; // 3 cycles: SPSR/LR save + vector fetch, 2 cycle refill
-      				cycles_types   <= {S,S,I};
+					cycles_types   <= {S,S,I};
 
 					// SPSR_<new_mode> <= CPSR;
 					PSR_wr_en <= 1;
@@ -1272,7 +1428,7 @@ always @(posedge CLK) begin
 					signEx_f 		<= 1;
 
 					opcode_o		<= ADD;
-					// Sign-extend 11-bit offset to 24-bit Imm_o (b_shifter then applies LSL).
+					// OffsetHigh is signed; OffsetLow is the unsigned low part of the same displacement.
 					//Shift_o			<= instruct_reg[11] ? 8'b00001000 : 8'b01100000; // H=1: LSL #1, H=0: LSL #12
 
 					if (instruct_reg[11]) begin
@@ -1283,7 +1439,7 @@ always @(posedge CLK) begin
 						//Writeback_en 	<= 1;
 						Rn_o			<= 4'b1110; // LR
 						Rd_o			<= 4'b1111; // PC
-						Imm_o			<= {{12{instruct_reg[10]}}, instruct_reg[10:0], 1'b0};
+						Imm_o			<= {12'b0, instruct_reg[10:0], 1'b0};
 					end else begin
 						// H=0: LR = PC + (offset << 12). Plain DP write, no pipeline flush.
 						Rn_o			<= 4'b1111; // PC
@@ -1301,8 +1457,24 @@ always @(posedge CLK) begin
 		if (cycle_count[2:1] == 2'b01) pre_abort_pending <= ~ABORT_r;
 		case (Inst_decoded_o)
 			DP: begin
-				Reg_bank_en <= 0;
-				Addr_reg_sel <= Incrementer_bus;
+				if (arm_register_shift_active) begin
+					if (cycles_types[1:0] == I) begin
+						Reg_bank_en <= (instruct_dec[24:21] == TST ||
+						                instruct_dec[24:21] == TEQ ||
+						                instruct_dec[24:21] == CMP ||
+						                instruct_dec[24:21] == CMN) ? 1'b0 : 1'b1;
+						PSR_wr_en <= instruct_dec[20];
+						Addr_reg_sel <= (instruct_dec[15:12] == 4'b1111)
+						                ? ALU_bus : Incrementer_bus;
+					end else begin
+						Reg_bank_en <= 0;
+						PSR_wr_en <= 0;
+						Addr_reg_sel <= Incrementer_bus;
+					end
+				end else begin
+					Reg_bank_en <= 0;
+					Addr_reg_sel <= Incrementer_bus;
+				end
 			end
 			Mult: begin
 				Multiplier_reg_en <= 0;
@@ -1349,7 +1521,7 @@ always @(posedge CLK) begin
 				B_shifter_en	<= 0;
 				set_thumb_bit	<= 0;
 				Addr_reg_sel 	<= Incrementer_bus;
-				MAS				<= thumb_state ? 2'b01 : 2'b10;
+				MAS				<= bx_target_thumb ? 2'b01 : 2'b10;
 			end
 			Branch: begin
 				Link_f			<= 0;
@@ -1383,6 +1555,7 @@ always @(posedge CLK) begin
 						end
 					endcase
 				end else if (Load_f) begin
+					MAS <= HW_Byte_f ? 2'b01 : 2'b00;
 					Addr_reg_sel <= PC_bus;
 					Reg_bank_en <= Pre_Pos_Indx_f ? (Write_Back_f ? 1'b1 : 1'b0) : 1'b1;
 					Rd_o <= Rn_o;
@@ -1398,13 +1571,11 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= HW_Byte_f ? 2'b01 : 2'b00;
 					Writeback_en <= 0;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b10;
 						Reg_bank_en <= Pre_Pos_Indx_f ? (Write_Back_f ? 1'b1 : 1'b0) : 1'b1;
-						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
 				end
@@ -1425,7 +1596,7 @@ always @(posedge CLK) begin
 							// Load pipeline with new instructions after branch
 							Reg_bank_en  <= 0;
 							Writeback_en <= 0;
-							Addr_reg_sel <= PC_bus;
+							Addr_reg_sel <= Incrementer_bus;
 						end
 						5'b00011: begin
 							Writeback_en <= 0;
@@ -1435,6 +1606,7 @@ always @(posedge CLK) begin
 						end
 					endcase
 				end else if (Load_f) begin
+					MAS <= Byte_Word_f ? 2'b00 : 2'b10;
 					Addr_reg_sel <= PC_bus;
 					Reg_bank_en <= Pre_Pos_Indx_f ? (Write_Back_f ? 1'b1 : 1'b0) : 1'b1;
 					Rd_o <= Rn_o;
@@ -1451,12 +1623,10 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= Byte_Word_f ? 2'b00 : 2'b10;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b10;
 						Reg_bank_en <= Pre_Pos_Indx_f ? (Write_Back_f ? 1'b1 : 1'b0) : 1'b1;
-						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
 				end
@@ -1482,14 +1652,15 @@ always @(posedge CLK) begin
 
 				if (cycle_count[4:3] == 2'b01 && instruct_dec[15] && Load_f) begin
 					Addr_reg_sel <= ALU_bus;
-				end else if (cycle_count[3:2] == 2'b01) begin
+				end else if ((cycle_count[3:2] == 2'b01) && Load_f) begin
 					if (instruct_dec[15] && Load_f) increment_sel <= PC;
 					Addr_reg_sel <= (instruct_dec[15] && Load_f) ? Incrementer_bus : PC_bus;
 					Reg_bank_en <= Load_f ? (instruct_dec[15] ? 1'b0 : 1'b1) : 1'b0;
 					Wr_Data_reg_en <= 0;
 				end else if (cycle_count[2:1] == 2'b01) begin
-					core_nRW <= 0;
-					Reg_bank_en <= Load_f ? (instruct_dec[15] ? 1'b0 : 1'b1) : 1'b0;
+					core_nRW <= Load_f ? 1'b0 : 1'b1;
+					Reg_bank_en <= Load_f ? (instruct_dec[15] ? 1'b0 : 1'b1) : Write_Back_f;
+					if (!Load_f) Rd_o <= Rn_o;
 					Writeback_en <= 0;
 					Wr_Data_reg_en <= 0;
 					Addr_reg_sel <= Incrementer_bus;
@@ -1500,14 +1671,17 @@ always @(posedge CLK) begin
 			Alu_OP: begin
 				Multiplier_reg_en <= 0;
 				Reg_bank_en <= 1;
+				if (thumb_register_shift_active)
+					PSR_wr_en <= 1;
 			end
 			Hi_op_BranchX: begin
 				Reg_bank_en		<= 0;
 				set_thumb_bit	<= 0;
 				Addr_reg_sel 	<= Incrementer_bus;
-				MAS				<= thumb_state ? 2'b01 : 2'b10;
+				MAS				<= bx_target_thumb ? 2'b01 : 2'b10;
 			end
 			Pc_r_L: begin
+				MAS <= 2'b10;
 				Addr_reg_sel <= PC_bus;
 				if (cycle_count[2:1] == 2'b01) begin
 					opcode_o <= MOV; // Mov Rd <- Data_reg_in
@@ -1520,6 +1694,7 @@ always @(posedge CLK) begin
 			LS_Reg_Off: begin
 				data_abort_pending <= ~ABORT_r;
 				if (Load_f) begin
+					MAS <= Byte_Word_f ? 2'b00 : 2'b10;
 					Addr_reg_sel <= PC_bus;
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
@@ -1533,11 +1708,9 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= Byte_Word_f ? 2'b00 : 2'b10;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b01;
-						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
 				end
@@ -1545,6 +1718,7 @@ always @(posedge CLK) begin
 			LS_SignEx_HW: begin
 				data_abort_pending <= ~ABORT_r;
 				if (Load_f) begin
+					MAS <= {1'b0, HW_Byte_f};
 					Addr_reg_sel <= PC_bus;
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
@@ -1558,11 +1732,9 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= 2'b01;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b01;
-						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
 				end
@@ -1570,6 +1742,7 @@ always @(posedge CLK) begin
 			LS_Imm_Off: begin
 				data_abort_pending <= ~ABORT_r;
 				if (Load_f) begin
+					MAS <= Byte_Word_f ? 2'b00 : 2'b10;
 					Addr_reg_sel <= PC_bus;
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
@@ -1583,11 +1756,9 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= Byte_Word_f ? 2'b00 : 2'b10;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b01;
-						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
 				end
@@ -1595,6 +1766,7 @@ always @(posedge CLK) begin
 			HW_LS_T: begin
 				data_abort_pending <= ~ABORT_r;
 				if (Load_f) begin
+					MAS <= 2'b01;
 					Addr_reg_sel <= PC_bus;
 					Rd_o <= Rn_o;
 					if (cycle_count[2:1] == 2'b01) begin
@@ -1608,17 +1780,16 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= 2'b01;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b01;
-						Addr_reg_sel <= Incrementer_bus;
 						Rd_o <= Rn_o;
 					end
 				end
 			end
 			SP_rel_LS: begin
 				if (Load_f) begin
+					MAS <= 2'b10;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
 						opcode_o <= MOV; // Mov Rd <- Data_reg_in
@@ -1629,11 +1800,9 @@ always @(posedge CLK) begin
 					end
 				end else if (~Load_f) begin
 					core_nRW <= 1;
+					MAS <= 2'b10;
 					Addr_reg_sel <= PC_bus;
 					if (cycle_count[2:1] == 2'b01) begin
-						core_nRW <= 0;
-						MAS <= 2'b01;
-						Addr_reg_sel <= Incrementer_bus;
 					end
 				end
 			end
@@ -1663,27 +1832,45 @@ always @(posedge CLK) begin
 				Writeback_en <= 1'b1;
 				Addr_reg_sel <= Incrementer_bus;
 				increment_sel <= Address_reg;
+				// POP {...,PC} reaches its final stack word at count 15; the
+				// remaining count-7/count-3 phases refill the pipeline and must
+				// not advance SP again. Drive the loaded target directly into the
+				// address register, as the ARM block-load PC path does.
+				if (Load_f && PC_LR_f && !cycle_count[4]) begin
+					Writeback_en <= 1'b0;
+					Addr_reg_sel <= ALU_bus;
+					MAS <= 2'b01;
+				end
 				wait_f <= 0;
 
 				if (Load_f && ~wait_f) begin
-					opcode_o <= MOV;
-					Reg_bank_en <= 1;
-					B_shifter_en <= 0;
-					Bus_B_sel <= Data_reg_in;
-					Rd_o <= register_list[3:0];
-					register_list <= register_list >> 4;
+					if (!PC_LR_f || cycle_count[3]) begin
+						opcode_o <= MOV;
+						Reg_bank_en <= 1;
+						B_shifter_en <= 0;
+						Bus_B_sel <= Data_reg_in;
+						Rd_o <= register_list[3:0];
+						register_list <= register_list >> 4;
+					end else begin
+						Reg_bank_en <= 1'b0;
+					end
 				end else if (~Load_f) begin
 					Rs_o <= register_list[3:0];
 					register_list <= register_list >> 4;
 					core_nRW <= 1;
+					MAS <= 2'b10;
 				end
 
-				if (cycle_count[3:2] == 2'b01) begin
+				if ((cycle_count[3:2] == 2'b01) && Load_f) begin
 					Addr_reg_sel <= PC_bus;
 					Wr_Data_reg_en <= 0;
 				end else if (cycle_count[2:1] == 2'b01) begin
-					core_nRW <= 0;
-					MAS <= 2'b01;
+					core_nRW <= Load_f ? 1'b0 : 1'b1;
+					MAS <= Load_f ? 2'b01 : 2'b10;
+					if (!Load_f) begin
+						Reg_bank_en <= 1'b1;
+						Rd_o <= Rn_o;
+					end
 					Writeback_en <= 0;
 					Wr_Data_reg_en <= 0;
 					Addr_reg_sel <= Incrementer_bus;
@@ -1708,14 +1895,19 @@ always @(posedge CLK) begin
 					Rs_o <= register_list[3:0];
 					register_list <= register_list >> 4;
 					core_nRW <= 1;
+					MAS <= 2'b10;
 				end
 
-				if (cycle_count[3:2] == 2'b01) begin
+				if ((cycle_count[3:2] == 2'b01) && Load_f) begin
 					Addr_reg_sel <= PC_bus;
 					Wr_Data_reg_en <= 0;
 				end else if (cycle_count[2:1] == 2'b01) begin
-					core_nRW <= 0;
-					MAS <= 2'b01;
+					core_nRW <= Load_f ? 1'b0 : 1'b1;
+					MAS <= Load_f ? 2'b01 : 2'b10;
+					if (!Load_f) begin
+						Reg_bank_en <= 1'b1;
+						Rd_o <= Rn_o;
+					end
 					Writeback_en <= 0;
 					Wr_Data_reg_en <= 0;
 					Addr_reg_sel <= Incrementer_bus;
@@ -1724,6 +1916,9 @@ always @(posedge CLK) begin
 				end
 			end
 			exception: begin
+				// The first refill cycle retains the old instruction width. Once it
+				// has completed, exception vectors and their refill are ARM words.
+				MAS <= 2'b10;
 				PSR_wr_en <= 0;
 				PSR_sel_f <= 0;
 				Link_f	  <= 0; 
@@ -1738,7 +1933,18 @@ always @(posedge CLK) begin
 			default: begin
 
 			end
-		endcase
+			endcase
+
+			// The opcode following a single store was fetched before the write.
+			// While DOUT owns the system bus, advance both PC and the registered
+			// fetch address so the retained opcode can execute on the next edge.
+			if (single_store_sequence ||
+			    (multiple_store_sequence &&
+			     (cycle_count[2:1] == 2'b01))) begin
+				Addr_reg_sel <= Incrementer_bus;
+				increment_sel <= PC;
+			end
+
 	end
 end
 
@@ -1747,7 +1953,7 @@ always @(*) begin
 		SD_Swap: Addr_reg_en 		= cycle_count[3] || cycle_count[1] || cycle_count[0];
 		HW_LS: Addr_reg_en 			= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
 		SD_LS: Addr_reg_en 			= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
-		BD_LS: Addr_reg_en 			= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
+		BD_LS: Addr_reg_en 			= (Load_f && (Rd_o == 4'b1111)) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
 		Push_Pop_Reg: Addr_reg_en 	= (Rd_o == 4'b1111) ? ((cycle_count[4:3] == 2'b01) ? 1'b0 : 1'b1) : 1'b1;
 		Multi_LS: Addr_reg_en 		= 1'b1;
 		Pc_r_L: Addr_reg_en 		= 1'b1;
@@ -1760,17 +1966,24 @@ always @(*) begin
 		default: Addr_reg_en 		= (cycles_types[1:0] == S || cycles_types[1:0] == N) ? 1'b1 : 1'b0;
 	endcase
 
-	if (Inst_decoded_o == BD_LS) begin
+	if (normal_arm_single_load) begin
+		pipeline_halt_r = (~cycle_count[1]) ? 1'b0 : 1'b1;
+	end else if (Inst_decoded_o == BD_LS) begin
 		if (instruct_dec[15] && Load_f) pipeline_halt_r = (~cycle_count[3]) ? 1'b0 : 1'b1;
 		else pipeline_halt_r = (~cycle_count[1]) ? 1'b0 : 1'b1;
-	end else if (Inst_decoded_o == Push_Pop_Reg || Inst_decoded_o == Multi_LS) begin
+	end else if (Inst_decoded_o == Push_Pop_Reg) begin
+		if (instruct_dec[8] && Load_f) pipeline_halt_r = (~cycle_count[3]) ? 1'b0 : 1'b1;
+		else pipeline_halt_r = (~cycle_count[1]) ? 1'b0 : 1'b1;
+	end else if (Inst_decoded_o == Multi_LS) begin
 		pipeline_halt_r = (~cycle_count[1]) ? 1'b0 : 1'b1;
 	end else begin
 		pipeline_halt_r = (~cycle_count[1] || cycles_types[1:0] == S) ? 1'b0 : 1'b1;
 	end
 end
 
-assign	pc_we = (Addr_reg_sel == Incrementer_bus && increment_sel == PC && Addr_reg_en && !exception_take) ? 1'b1 : 1'b0;
+assign	pc_we = !exception_take &&
+					((Addr_reg_sel == Incrementer_bus && increment_sel == PC &&
+					  Addr_reg_en));
 
 always @(*) begin
 	if (~thumb_state) begin

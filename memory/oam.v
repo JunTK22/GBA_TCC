@@ -3,9 +3,10 @@
 //  1 KiB, single-port Object Attribute Memory with CPU/DMA/PPU arbitration.
 //
 //  The CPU/DMA port is byte addressed; the PPU port uses 32-bit word indices.
-//  An active PPU read has priority unless force blank is asserted. A colliding
+//  An active PPU read has priority, including during force blank. A colliding
 //  CPU/DMA request holds `ready` low and is retried through the shared nWAIT
-//  path. PPU-only traffic does not stall that global ready chain.
+//  path. PPU-only traffic does not stall that global ready chain. The retained
+//  force-blank port keeps this wrapper interface aligned with the other PPU RAMs.
 //
 //  Reads are synchronous. GBA OAM permits 8/16/32-bit reads and 16/32-bit
 //  writes; byte writes complete without changing memory.
@@ -36,7 +37,7 @@ module oam (
     localparam [1:0] SIZE_WORD = 2'b10;
 
     wire cpu_request = we || rden;
-    wire ppu_request = ppu_rden && !force_blank;
+    wire ppu_request = ppu_rden;
     wire cpu_grant = cpu_request && !ppu_request;
 
     wire [9:0] mem_addr =

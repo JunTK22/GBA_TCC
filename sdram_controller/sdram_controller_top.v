@@ -1,16 +1,22 @@
 // =============================================================================
 //  sdram_controller_top.v
-//  CPU-clock to SDRAM-clock wrapper around `sdram_controller`.
+//  Inverse-CPU-clock to SDRAM-clock wrapper around `sdram_controller`.
 //
 //  Host interface uses a 28-bit byte address, 32-bit data, `MAS` access size,
-//  and CPU `sign_extend`. It remaps EWRAM and PAK ROM apertures into SDRAM
-//  halfword addresses, derives byte masks for subword writes, formats byte and
-//  halfword reads, and requests two SDRAM half-beats for 32-bit word transfers.
+//  and CPU `sign_extend`. It remaps EWRAM, PAK ROM, and Cart RAM apertures into
+//  SDRAM halfword addresses, derives byte masks for subword writes, formats byte
+//  and halfword reads, and requests two SDRAM half-beats for 32-bit transfers.
+//  Cart RAM uses WAITCNT[1:0] for its minimum access time while retaining the
+//  project's loader-facing halfword/word extension for DMA transfers.
 //
 //  The CPU and SDRAM clocks are related PLL outputs. A new host beat is sampled
 //  on the first following SDRAM edge, then held until the core accepts it. The
 //  completion flag is retimed on the SDRAM falling edge so it is stable before
 //  the inverse-CPU-clock edge that updates `nWAIT`.
+//
+//  In the default board profile this wrapper backs EWRAM, writable PAK ROM, and
+//  Cart RAM. When `USE_ONCHIP_GAMEPAK` is selected at the parent top, PAK traffic
+//  bypasses this wrapper while EWRAM and Cart RAM retain the same handshake.
 // =============================================================================
 
 module sdram_controller_top (
@@ -22,6 +28,7 @@ module sdram_controller_top (
     input   wire        wr_en,
     input   wire [1:0]  MAS,          // active master size: 00=byte 01=half 10=word
     input   wire        sign_extend,  // CPU sign_f, for byte loads
+    input   wire [1:0]  sram_wait,    // WAITCNT[1:0]: 4, 3, 2, or 8 wait edges
 
 	input   wire [27:0] addr,
     input   wire [31:0] wr_data,
@@ -39,9 +46,10 @@ module sdram_controller_top (
     output  wire [1:0]  DQM
 );
 
-wire is_ewram = addr[27:24] == 4'h2;
-wire is_byte  = (MAS == 2'b00);
-wire is_word  = MAS[1];            // MAS: 10=word, 01=half, 00=byte
+wire is_ewram   = addr[27:24] == 4'h2;
+wire is_cartram = addr[27:25] == 3'b111;
+wire is_byte    = (MAS == 2'b00);
+wire is_word    = MAS[1];            // MAS: 10=word, 01=half, 00=byte
 
 wire        access   = rd_en || wr_en;
 reg  [29:0] acc_q = 0;
@@ -51,15 +59,21 @@ always @(posedge clock) acc_q <= acc;
 
 // Minimum GBA-visible access length, counted at inverse CPU-clock edges. The
 // first edge after launch loads count 1; the final threshold is visible before
-// the edge that releases `nWAIT`. PAK accesses use default non-sequential time.
-wire [2:0] min_wait_edges = is_ewram ? (is_word ? 3'd5 : 3'd2)
-                                      : (is_word ? 3'd7 : 3'd4);
-reg [2:0] wait_edges = 0;
+// the edge that releases `nWAIT`. Cart RAM follows WAITCNT[1:0]; PAK accesses
+// use default non-sequential time.
+wire [3:0] sram_wait_edges = (sram_wait == 2'b00) ? 4'd4 :
+                             (sram_wait == 2'b01) ? 4'd3 :
+                             (sram_wait == 2'b10) ? 4'd2 :
+                                                    4'd8;
+wire [3:0] min_wait_edges = is_cartram ? sram_wait_edges :
+                            is_ewram   ? (is_word ? 4'd5 : 4'd2) :
+                                         (is_word ? 4'd7 : 4'd4);
+reg [3:0] wait_edges = 0;
 always @(posedge clock or negedge nrst)
     if (!nrst)            wait_edges <= 0;
     else if (!access)     wait_edges <= 0;
-    else if (new_beat)    wait_edges <= 3'd1;
-    else if (wait_edges != 3'd7)
+    else if (new_beat)    wait_edges <= 4'd1;
+    else if (wait_edges != 4'd8)
         wait_edges <= wait_edges + 1'b1;
 
 wire timing_ready = wait_edges >= min_wait_edges;
@@ -75,9 +89,9 @@ wire beat_start    = new_beat && !beat_seen;
 wire rd_start_fast = beat_start && rd_en;
 wire wr_start_fast = beat_start && wr_en;
 
-wire [24:0] mapped_addr = is_ewram
-                        ? {8'b0, addr[17:1]}
-                        : {1'b1, addr[24:1]};
+wire [24:0] mapped_addr = is_ewram   ? {8'b0, addr[17:1]} :
+                          is_cartram ? {2'b01, 8'b0, addr[15:1]} :
+                                       {1'b1, addr[24:1]};
 wire [31:0] mapped_wr_data = is_byte
                            ? {16'b0, {2{wr_data[7:0]}}}
                            : wr_data;

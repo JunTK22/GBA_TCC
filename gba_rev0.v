@@ -4,19 +4,31 @@
 //
 //  Active system paths:
 //      ARM7TDMI + DMA0..3 -> bus_arbiter -> bus_controller -> memory regions
+//      IO registers + timers -> IF/IE/IME, DMA control, WAITCNT, and HALTCNT
 //      IO register controls -> PPU -> VRAM/OAM/palette fetch ports
+//      DE1-SoC KEY[1:3] -> synchronized GBA KEYINPUT A/B/Start bits
 //
 //  The CPU, DMA engines, and PPU use the 17 MHz PLL `clock_cpu` output. Local
 //  memories, the IO register file, and the SDRAM host wrapper use the dedicated
 //  inverse output, `clock_cpu_n`, for the synchronous-read timing convention.
-//  `mem_ready` releases CPU nWAIT and holds DMA through `.halt(!mem_ready)`.
+//  PPU-RAM ready is sampled for DMA so an inverse-edge collision wait remains
+//  visible at the next DMA state-machine edge. Registered CPU `nWAIT`
+//  additionally accounts for DMA pending/active ownership and HALT state.
+//
+//  The bus preserves the last accepted CPU opcode for GBA open-bus reads and
+//  BIOS protection. DMA breaks the CPU sequential stream, so the first accepted
+//  CPU cycle after DMA is exposed as non-sequential. A BIOS-qualified HALTCNT
+//  write stops the gated core clock; DMA-originated HALT retains the parked CPU
+//  bus cycle for two extra inverse-clock recovery edges after wake.
 //
 //  The PPU drives DISPSTAT/VCOUNT state, video IRQ requests, and VBlank/HBlank
 //  DMA start events. Its rendered pixel and blanking outputs are not yet routed
 //  to the board VGA pins.
 //
-//  SDRAM access size and sign-extension controls come from the active master
-//  bus (`MAS`, `sign_extend`).
+//  The default build keeps EWRAM, writable PAK ROM, and Cart RAM in SDRAM.
+//  `USE_ONCHIP_GAMEPAK` selects the M10K-backed, WAITCNT-timed ROM used by the
+//  exact-top hw-test harness. Access size, SEQ, and sign-extension controls come
+//  from the currently selected CPU or DMA master.
 // =============================================================================
 
 module gba_rev0(
@@ -86,15 +98,12 @@ module gba_rev0(
 	inout 		    [35:0]		GPIO_1
 );
 
-//parameter INIT_FILE  = "code/assembly_code/instrucoes.mif";
-//parameter INIT_FILE  = "code/assembly_code/arm7tdmi_thumb_test.mif";
-//parameter INIT_FILE  = "code/assembly_code/interrupt_test.mif";
-//parameter INIT_FILE  = "code/assembly_code/bus_test.mif";
-//parameter INIT_FILE  = "code/assembly_code/presentation_fibonacci.mif";
-//parameter INIT_FILE  = "code/assembly_code/memory_system_test.mif";
-//parameter INIT_FILE  = "code/assembly_code/dma_modes_test.mif";
-//parameter INIT_FILE  = "code/assembly_code/dma_irq_memory_test.mif";
-parameter INIT_FILE  = "code/assembly_code/thumb_memory_test.mif";
+// The default profile preserves the existing synthetic-BIOS and writable
+// SDRAM-backed PAK regression. Authentic cartridge builds override all three
+// parameters with the retail BIOS MIF, one converted .gba MIF, and enable=1.
+parameter BIOS_INIT_FILE = "code/assembly_code/memory_system_test.mif";
+parameter GAMEPAK_INIT_FILE = "UNUSED";
+parameter USE_ONCHIP_GAMEPAK = 1'b0;
 
 //=======================================================
 //  REG/WIRE declarations
@@ -118,6 +127,29 @@ wire nrst;
 
 wire tap_en;
 
+// The DE1-SoC push-buttons are active-low and asynchronous to clock_n. The
+// board debounces them in hardware; these two stages provide metastability
+// containment before KEYINPUT is sampled by io_registers on clock_n.
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS; -name DONT_MERGE_REGISTER ON; -name PRESERVE_REGISTER ON"} *)
+reg [2:0] keypad_meta_n;
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS; -name DONT_MERGE_REGISTER ON; -name PRESERVE_REGISTER ON"} *)
+reg [2:0] keypad_sync_n;
+
+always @(posedge clock_n or negedge nrst) begin
+    if (!nrst) begin
+        keypad_meta_n <= 3'b111;
+        keypad_sync_n <= 3'b111;
+    end else begin
+        keypad_meta_n <= KEY[3:1];
+        keypad_sync_n <= keypad_meta_n;
+    end
+end
+
+// KEYINPUT bits: 0=A, 1=B, 3=Start. All other buttons remain released.
+wire [15:0] keypad_input = {6'b000000, 6'b111111,
+                            keypad_sync_n[2], 1'b1,
+                            keypad_sync_n[1:0]};
+
 wire [31:0] r [0:15];
 
 wire [31:0] din;
@@ -132,6 +164,10 @@ wire [31:0] CPSR;
 
 wire nRW;
 wire nRW_CPU;
+wire nMREQ_cpu;
+wire SEQ_cpu;
+wire nOPC_cpu;
+wire SEQ;
 wire [1:0] MAS;
 wire [1:0] MAS_cpu;
 
@@ -155,6 +191,10 @@ wire [31:0] data_dma2;
 wire [31:0] data_dma3;
 
 wire [31:0] data_sdram;
+wire [31:0] data_gamepak;
+reg  [31:0] cpu_open_bus = 32'd0;
+reg         cpu_exec_bios = 1'b0;
+reg         cpu_exec_gamepak = 1'b0;
 
 wire        rden_bios;
 wire        rden_ewram;
@@ -177,6 +217,9 @@ wire		we_cartram;
 
 // DMA control registers (io_registers -> dma)
 wire [3:0]  dma_active;
+wire [3:0]  dma_pending;
+wire [3:0]  dma_request;
+wire [3:0]  dma_disable;
 
 wire [31:0]	dma0sad_o;
 wire [31:0]	dma0dad_o;
@@ -210,6 +253,22 @@ wire [1:0] MAS_dma0;
 wire [1:0] MAS_dma1;
 wire [1:0] MAS_dma2;
 wire [1:0] MAS_dma3;
+wire       SEQ_dma0;
+wire       SEQ_dma1;
+wire       SEQ_dma2;
+wire       SEQ_dma3;
+
+// A pending or active higher-priority DMA pauses lower channels in place.
+// Direction must likewise come only from the fixed-priority selected owner;
+// otherwise a held lower STORE can turn a higher-priority LOAD into a write.
+wire [3:0] dma_ownership = dma_pending | dma_active;
+wire [3:0] dma_priority_hold = {|dma_ownership[2:0],
+                                |dma_ownership[1:0],
+                                dma_ownership[0], 1'b0};
+wire dma_write_phase = dma_active[0] ? wr_en_dma0 :
+                       dma_active[1] ? wr_en_dma1 :
+                       dma_active[2] ? wr_en_dma2 :
+                       dma_active[3] ? wr_en_dma3 : 1'b0;
 
 // PPU register values from io_registers. These are written on clock_n and are
 // stable for half a CPU cycle before the PPU samples them on clock.
@@ -244,49 +303,224 @@ wire [15:0] ppu_palette_read_data;
 wire [10:0] ppu_tick;
 wire [7:0]  ppu_scanline;
 
-wire ppu_vblank_status = (ppu_scanline >= 8'd160)
-                       && (ppu_scanline <= 8'd226);
-wire ppu_hblank_status = ppu_tick >= 11'd1006;
-wire ppu_vcount_match = ppu_scanline == ppu_dispstat[15:8];
-wire ppu_vblank_start = (ppu_tick == 11'd0)
-                      && (ppu_scanline == 8'd160);
-wire ppu_hblank_start = (ppu_tick == 11'd1006)
-                      && (ppu_scanline < 8'd160);
+// CPU-visible LCD timing leads the renderer's scanline rollover. VCOUNT and
+// VBlank advance during the final eight renderer cycles; HBlank has its own
+// measured status window. IRQ and DMA request phases are kept separate below
+// because they do not coincide with every visible flag edge.
+wire [7:0] ppu_vcount = (ppu_tick >= 11'd1224)
+                      ? ((ppu_scanline == 8'd227)
+                         ? 8'd0 : ppu_scanline + 1'b1)
+                      : ppu_scanline;
+wire ppu_vblank_status = (ppu_vcount >= 8'd160)
+                       && (ppu_vcount <= 8'd226);
+wire ppu_hblank_status = (ppu_tick >= 11'd999)
+                       && (ppu_tick < 11'd1224);
+wire ppu_vcount_match = ppu_vcount == ppu_dispstat[15:8];
+wire ppu_vblank_start = (ppu_tick == 11'd1226)
+                      && (ppu_scanline == 8'd159);
+wire ppu_hblank_start = ppu_tick == 11'd1001;
+wire ppu_hblank_dma_start = (ppu_tick == 11'd1001)
+                           && (ppu_scanline < 8'd160);
+wire ppu_frame_start = (ppu_tick == 11'd1228)
+                     && (ppu_scanline == 8'd227);
+wire ppu_video_line_start = (ppu_tick == 11'd1229)
+                          && (ppu_scanline >= 8'd1)
+                          && (ppu_scanline <= 8'd160);
+reg ppu_video_dma_armed = 1'b0;
+
+// DMA3 video capture is enabled for a frame only if special timing was already
+// programmed when that frame began. Requests then cover VCOUNT 2 through 161;
+// enabling DMA3 after VCOUNT becomes 0 therefore waits until the next frame.
+always @(posedge clock or negedge nrst) begin
+    if (!nrst)
+        ppu_video_dma_armed <= 1'b0;
+    else if (ppu_frame_start)
+        ppu_video_dma_armed <= dma3cnt_h_o[15] &&
+                               (dma3cnt_h_o[13:12] == 2'b11);
+end
+
+wire ppu_video_dma_start = ppu_video_dma_armed && ppu_video_line_start;
 
 reg ppu_vcount_match_q;
+reg ppu_vcount_match_qq;
+reg ppu_vcount_match_qqq;
 reg ppu_vcount_irq;
 always @(posedge clock) begin
     if (!nrst) begin
         ppu_vcount_match_q <= 1'b0;
+        ppu_vcount_match_qq <= 1'b0;
+        ppu_vcount_match_qqq <= 1'b0;
         ppu_vcount_irq <= 1'b0;
     end else begin
         ppu_vcount_match_q <= ppu_vcount_match;
-        ppu_vcount_irq <= ppu_vcount_match && !ppu_vcount_match_q;
+        ppu_vcount_match_qq <= ppu_vcount_match_q;
+        ppu_vcount_match_qqq <= ppu_vcount_match_qq;
+        ppu_vcount_irq <= ppu_vcount_match_qq && !ppu_vcount_match_qqq;
     end
 end
 
 // PPU and DMA event pulses are latched by IF. The CPU sees an active-low IRQ
-// only when the corresponding IE bit and IME are enabled; KEY[1] remains a
-// direct, active-low external IRQ source.
+// only when the corresponding IE bit and IME are enabled. KEY[1:3] are now
+// keypad inputs, so the former external IRQ/FIQ/abort sources are inactive.
 wire [15:0] ie_reg;
 wire [15:0] if_reg;
+wire [15:0] wscnt_reg;
 wire [15:0] ime_reg;
+wire [15:0] tm0_count, tm0_control;
+wire [15:0] tm1_count, tm1_control;
+wire [15:0] tm2_count, tm2_control;
+wire [15:0] tm3_count, tm3_control;
+wire [3:0]  timer_irq;
+wire        halt_request;
+wire        postflg;
 wire [13:0] irq_request = {2'b00, ~nirq_dma3, ~nirq_dma2,
-                            ~nirq_dma1, ~nirq_dma0, 5'b00000,
+                            ~nirq_dma1, ~nirq_dma0, 1'b0, timer_irq,
                             ppu_vcount_irq && ppu_dispstat[5],
                             ppu_hblank_start && ppu_dispstat[4],
                             ppu_vblank_start && ppu_dispstat[3]};
 wire        irq_pending = ime_reg[0] && |(ie_reg & if_reg);
-wire        nIRQ = KEY[1] && !irq_pending;
+wire        nIRQ = !irq_pending;
+reg         nIRQ_cpu = 1'b1;
+reg         halt_irq_available = 1'b0;
+wire        halt_wake = halt_irq_available;
+
+// IF, IE, and IME settle on clock_n. Propagate their combined request for one
+// full CPU cycle before the decoder's existing nIRQ input synchronizer; HALT
+// wake remains tied to enabled IF directly and is therefore unaffected.
+always @(posedge clock or negedge nrst) begin
+    if (!nrst)
+        nIRQ_cpu <= 1'b1;
+    else
+        nIRQ_cpu <= nIRQ;
+end
 
 ///////////////////////////////////////
 
 wire busy;
-wire [5:0] ready_mem;
+wire [6:0] ready_mem;
 reg nWAIT = 0;
+reg cpu_halted = 0;
+reg halt_transition_wait = 0;
+reg halt_request_seen = 0;
+reg [1:0] dma_halt_wake_wait = 0;
 wire mem_ready = !busy && &ready_mem;
+reg dma_ppu_ram_wait_sampled = 1'b0;
+wire dma_mem_hold = !mem_ready || dma_ppu_ram_wait_sampled;
+wire bus_request = (|dma_request) ||
+                   (!(|dma_pending) && !(|dma_active) && !nMREQ_cpu);
+wire cpu_cycle_accepted = bus_request && !(|dma_active) && nWAIT;
+wire dma_cpu_hold = (|dma_pending) || (|dma_active);
+reg dma_forced_nonseq = 0;
+wire cpu_seq_bus = SEQ_cpu && !dma_forced_nonseq;
+wire halt_new_request = halt_request && !halt_request_seen;
+wire halt_entry_request = halt_new_request;
+wire halt_delayed_wake = cpu_halted && halt_wake &&
+                         !halt_transition_wait;
+wire cpu_run_allowed = !halt_entry_request && !halt_transition_wait &&
+                       !halt_delayed_wake &&
+                       (halt_wake || !cpu_halted);
+reg bus_request_toggle = 0;
+
+// DMA breaks the CPU's external sequential stream. Keep the decoder's
+// pipeline classification intact, but expose the first accepted CPU bus cycle
+// after DMA as non-sequential to every memory region.
+always @(posedge clock or negedge nrst) begin
+    if (!nrst)
+        dma_forced_nonseq <= 1'b0;
+    else if (|dma_active)
+        dma_forced_nonseq <= 1'b1;
+    else if (cpu_cycle_accepted)
+        dma_forced_nonseq <= 1'b0;
+end
+
 always @(posedge clock_n) begin
-    nWAIT <= (!(|dma_active) && mem_ready);
+    // Palette, VRAM, and OAM can finish a one-wait collision on this inverse
+    // edge, before DMA samples `halt`. Retain only those short PPU-RAM waits;
+    // Game Pak and SDRAM already hold their live completion signals long enough
+    // and include their own DMA bus-cycle accounting.
+    dma_ppu_ram_wait_sampled <= (|dma_active) && !(&ready_mem[3:1]);
+    // The current core performs architectural reset synchronously on its
+    // nWAIT-gated clock, so reset must not hold that clock stopped. HALTCNT is
+    // level-held with the stopped CPU bus. Consume each write once, hold the
+    // CPU for the two HALT transition cycles, then let an enabled pending
+    // interrupt release the held transfer.
+    nWAIT <= (!dma_cpu_hold && mem_ready &&
+              (!nrst || cpu_run_allowed));
+end
+
+always @(posedge clock_n or negedge nrst) begin
+    if (!nrst) begin
+        cpu_halted <= 1'b0;
+        halt_transition_wait <= 1'b0;
+        halt_request_seen <= 1'b0;
+        halt_irq_available <= 1'b0;
+        dma_halt_wake_wait <= 2'd0;
+    end else begin
+        // IF is clocked in this domain. Register its enabled state once more
+        // before it becomes HALT-visible, matching the interrupt request
+        // synchronization without applying the IME gate used by CPU IRQ.
+        halt_irq_available <= |(ie_reg & if_reg);
+
+        if (!halt_request)
+            halt_request_seen <= 1'b0;
+        else if (halt_new_request)
+            halt_request_seen <= 1'b1;
+
+        if (halt_entry_request) begin
+            cpu_halted <= 1'b1;
+            halt_transition_wait <= 1'b1;
+            // A DMA-originated HALTCNT write parks an interrupted CPU bus
+            // cycle. Hardware exposes two additional recovery edges before
+            // that parked cycle resumes after wake; ordinary HALT is unchanged.
+            dma_halt_wake_wait <= (|dma_active) ? 2'd2 : 2'd0;
+        end else if (halt_transition_wait) begin
+            halt_transition_wait <= 1'b0;
+            if (halt_wake && (dma_halt_wake_wait == 0))
+                cpu_halted <= 1'b0;
+        end else if (halt_wake) begin
+            if (dma_halt_wake_wait != 0)
+                dma_halt_wake_wait <= dma_halt_wake_wait - 1'b1;
+            else
+                cpu_halted <= 1'b0;
+        end
+    end
+end
+
+// Every accepted CPU or DMA cycle changes this token before the following
+// inverse-clock request edge. It distinguishes identical consecutive Game Pak
+// accesses without changing the level-held ready/nWAIT protocol.
+always @(posedge clock or negedge nrst) begin
+    if (!nrst)
+        bus_request_toggle <= 1'b0;
+    else if (bus_request && ((|dma_active) ? mem_ready : nWAIT))
+        bus_request_toggle <= !bus_request_toggle;
+end
+
+// The external bus retains the most recently accepted CPU opcode. Thumb
+// fetches occupy only one halfword, so both halves of the 32-bit latch carry
+// the fetched opcode. Unmapped and write-only reads expose this value.
+always @(posedge clock or negedge nrst) begin
+    if (!nrst)
+        cpu_open_bus <= 32'd0;
+    else if (cpu_cycle_accepted && !nRW_CPU && !nOPC_cpu)
+        cpu_open_bus <= (MAS_cpu == 2'b01) ? {2{data_bus[15:0]}}
+                                             : data_bus;
+end
+
+// Remember the region supplying the accepted CPU opcode. The BIOS origin
+// qualifies its protected system-control writes, including DMA transfers that
+// run while a BIOS routine owns the stalled CPU. Game Pak prefetch may continue
+// during that instruction's internal or non-cartridge data cycles.
+always @(posedge clock or negedge nrst) begin
+    if (!nrst) begin
+        cpu_exec_bios <= 1'b0;
+        cpu_exec_gamepak <= 1'b0;
+    end else if (cpu_cycle_accepted && !nRW_CPU && !nOPC_cpu) begin
+        cpu_exec_bios <= addr_cpu[27:14] == 14'd0;
+        cpu_exec_gamepak <= (addr_cpu[27:25] == 3'b100) ||
+                            (addr_cpu[27:25] == 3'b101) ||
+                            (addr_cpu[27:25] == 3'b110);
+    end
 end
 //=======================================================
 //  Structural coding
@@ -298,23 +532,26 @@ arm7tdmi_top arm7tdmi_top(
 
 	.nWAIT	(nWAIT),
 
-	.DIN	(data_bus),
+		// DIN and DOUT are separate core ports. During a store the shared system
+		// bus carries DOUT, while the decoder still consumes the opcode retained
+		// by the preceding accepted fetch.
+		.DIN	(nRW_CPU ? cpu_open_bus : data_bus),
 	.A		(addr_cpu),
 	.DOUT	(data_cpu),
 	.nRW	(nRW_CPU),
 	.MAS	(MAS_cpu),
-	.nMREQ	(),
-	.SEQ	(),
-	.nOPC	(),
+	.nMREQ	(nMREQ_cpu),
+	.SEQ	(SEQ_cpu),
+		.nOPC	(nOPC_cpu),
 	.nTRANS	(),
 
 	.nENOUT	(),
 
 	.sign_f	(sign_extend),
 
-	.nIRQ	(nIRQ),
-	.nFIQ	(KEY[2]),
-	.ABORT	(KEY[3]),
+	.nIRQ	(nIRQ_cpu),
+	.nFIQ	(1'b1),
+	.ABORT	(1'b1),
 
 	.tbit_out (LEDR[2]),
 
@@ -341,6 +578,7 @@ bus_controller bus_controller(
 	// input
 	.rd_addr	(addr_bus),
 	.nRW 	 	(nRW),
+	.request	(bus_request),
 
 	.data_bios   (data_bios),
 	.data_ewram  (data_ewram),
@@ -350,8 +588,9 @@ bus_controller bus_controller(
 	.data_vram	 (data_vram),
 	.data_oam	 (data_oam),
 	.data_pakrom (data_pakrom),
-	.data_cartram(data_cartram),
-	.data_main	 (data_main),
+		.data_cartram(data_cartram),
+		.data_main	 (data_main),
+		.data_open_bus (cpu_open_bus),
 
 	// output
 	.data_o		(data_bus),
@@ -395,13 +634,20 @@ bus_arbiter bus_arbiter (
     .MAS_dma2      (MAS_dma2),
     .MAS_dma3      (MAS_dma3),
 
+    .SEQ_cpu       (cpu_seq_bus),
+    .SEQ_dma0      (SEQ_dma0),
+    .SEQ_dma1      (SEQ_dma1),
+    .SEQ_dma2      (SEQ_dma2),
+    .SEQ_dma3      (SEQ_dma3),
+
     .nRW_CPU       (nRW_CPU),
-    .wr_en_dma     (wr_en_dma0 || wr_en_dma1 || wr_en_dma2 || wr_en_dma3),
+    .wr_en_dma     (dma_write_phase),
     .dma_active    (dma_active),
 
     .addr_o        (addr_bus),
     .data_o        (data_main),
     .MAS           (MAS),
+    .SEQ           (SEQ),
     .nRW           (nRW)
 );
 
@@ -411,11 +657,14 @@ sdram_controller_top sdram_controller(
     .nrst       (nrst),
     .MAS        (MAS),
     .sign_extend (sign_extend),
+    .sram_wait  (wscnt_reg[1:0]),
 
-    .rd_en      (rden_pakrom  || rden_ewram),
-    .wr_en      (we_pakrom || we_ewram),
+    .rd_en      ((!USE_ONCHIP_GAMEPAK && rden_pakrom) ||
+                 rden_ewram || rden_cartram),
+    .wr_en      ((!USE_ONCHIP_GAMEPAK && we_pakrom) ||
+                 we_ewram || we_cartram),
 	
-    .addr       (addr_bus),
+    .addr       (addr_bus[27:0]),
     .wr_data    (data_bus),
     .rd_data    (data_sdram),
     .busy       (busy),
@@ -432,19 +681,53 @@ sdram_controller_top sdram_controller(
 );
 
 assign DRAM_CLK = clock_sdram_d;
-assign data_pakrom = data_sdram;
+assign data_pakrom = USE_ONCHIP_GAMEPAK ? data_gamepak : data_sdram;
 assign data_ewram = data_sdram;
+assign data_cartram = data_sdram;
 
 bios #(
-    .INIT_FILE (INIT_FILE)
+    .INIT_FILE (BIOS_INIT_FILE)
 ) bios (
     .clk	(clock_n),
-    .addr	(addr_bus),        // word address (4096 32-bit words = 16 KB)
+    .addr	(addr_bus[13:0]),  // byte address within the 16 KiB BIOS
     .rdata	(data_bios),
     .rden	(rden_bios),
     .size	(MAS),             // 00=byte 01=half 10=word
-    .sign_extend (sign_extend)
+    .sign_extend (sign_extend),
+    .access_allowed (!(|dma_active) &&
+                     ((!nOPC_cpu && (addr_cpu[27:14] == 14'd0)) ||
+                      (r[15][31:14] == 18'd0))),
+    .opcode_fetch   (!(|dma_active) && !nOPC_cpu),
+    .ready          (),
+    .misalign_fault ()
 );
+
+generate
+    if (USE_ONCHIP_GAMEPAK) begin : generate_onchip_gamepak
+        gamepak_rom #(
+            .INIT_FILE (GAMEPAK_INIT_FILE)
+        ) gamepak_rom (
+            .clk            (clock_n),
+            .nrst           (nrst),
+            .addr           (addr_bus[27:0]),
+            .rden           (rden_pakrom),
+            .wren           (we_pakrom),
+            .size           (MAS),
+            .sign_extend    (sign_extend),
+            .seq            (SEQ),
+            .opcode_fetch   (!(|dma_active) && !nOPC_cpu),
+            .cpu_exec_gamepak (cpu_exec_gamepak),
+            .dma_access     (|dma_active),
+            .request_toggle (bus_request_toggle),
+            .waitcnt        (wscnt_reg),
+            .rdata          (data_gamepak),
+            .ready          (ready_mem[6])
+        );
+    end else begin : generate_sdram_gamepak
+        assign data_gamepak = 32'd0;
+        assign ready_mem[6] = 1'b1;
+    end
+endgenerate
 
 //ewram ewram (
 //    .clk	(clock_n),
@@ -461,7 +744,7 @@ bios #(
 
 iwram iwram (
     .clk	(clock_n),
-    .addr	(addr_bus),           // 32 KB byte address
+    .addr	(addr_bus[14:0]),     // 32 KB byte address
     .wdata	(data_bus),
     .rdata	(data_iwram),
     .we		(we_iwram),
@@ -474,7 +757,7 @@ iwram iwram (
 
 palette_ram palette_ram (
     .clk	(clock_n),
-    .addr	(addr_bus),           // 1 KB byte address
+    .addr	(addr_bus[9:0]),      // 1 KB byte address
     .wdata	(data_bus),
     .rdata	(data_palram),
     .we		(we_palram),
@@ -491,7 +774,7 @@ palette_ram palette_ram (
 
 vram vram (
     .clk	(clock_n),
-    .addr	(addr_bus),           // 128 KB byte address
+    .addr	(addr_bus[16:0]),     // 128 KB byte address
     .wdata	(data_bus),
     .rdata	(data_vram),
     .we		(we_vram),
@@ -512,7 +795,7 @@ vram vram (
 
 oam oam (
     .clk	(clock_n),
-    .addr	(addr_bus),            // 1 KB byte address
+    .addr	(addr_bus[9:0]),       // 1 KB byte address
     .wdata	(data_bus),
     .rdata	(data_oam),
     .we		(we_oam),
@@ -527,25 +810,36 @@ oam oam (
     .force_blank (ppu_dispcnt[7])
 );
 
-cart_ram cart_ram (
-    .clk	(clock_n),
-    .addr	(addr_bus),     // byte address
-    .wdata	(data_bus),
-    .rdata	(data_cartram),
-    .we		(we_cartram),
-    .rden	(rden_cartram),
-	.size	(MAS),
-    .sign_extend (sign_extend),
-    .ready	(ready_mem[4]),
-    .misalign_fault	()
+// Cart RAM shares the SDRAM controller's `busy` stall path. Its former local
+// ready contribution remains asserted so only the SDRAM completion gates it.
+assign ready_mem[4] = 1'b1;
+
+gba_timers gba_timers (
+    .clk           (clock_n),
+    .reset_n       (nrst),
+    .addr          (addr_bus[11:0]),
+    .wdata         (data_bus),
+    .we            (we_ioram),
+    .size          (MAS),
+    .tm0_count_o   (tm0_count),
+    .tm0_control_o (tm0_control),
+    .tm1_count_o   (tm1_count),
+    .tm1_control_o (tm1_control),
+    .tm2_count_o   (tm2_count),
+    .tm2_control_o (tm2_control),
+    .tm3_count_o   (tm3_count),
+    .tm3_control_o (tm3_control),
+    .irq_o         (timer_irq)
 );
 
 io_registers io_registers (
     .clk	(clock_n),
     .reset_n	(nrst),
     //---------------- CPU bus ----------------
-    .addr	(addr_bus),       // byte address within 1 KB IO space
+    .addr	(addr_bus[11:0]),
     .wdata	(data_bus),
+    .open_bus_i (cpu_open_bus),
+    .system_write_enable_i (cpu_exec_bios),
     .rdata	(data_ioram),
     .we		(we_ioram),
     .rden   (rden_ioram),
@@ -554,17 +848,22 @@ io_registers io_registers (
     .ready	(ready_mem[5]),
     .misalign_fault	(),
     //---------------- Hardware-driven read fields ----------------
-    .vcount_i	({8'd0, ppu_scanline}),
+    .vcount_i	({8'd0, ppu_vcount}),
     .vblank_status_i (ppu_vblank_status),
     .hblank_status_i (ppu_hblank_status),
-    .vcount_match_i  (ppu_vcount_match),
-    .keypad_i	(16'h03FF),    // REG_KEY (active low) — all keys released
+    .vcount_match_i  (ppu_vcount_match_q),
+    .keypad_i	(keypad_input), // REG_KEY (active low): A, B, and Start
     .irq_request_i (irq_request),
     .sound_status_i (4'd0),    // SOUNDCNT_X bits 0-3
     .serial_data0_i (16'd0),   // SCD0 (received)
     .serial_data1_i (16'd0),   // SCD1
     .serial_data2_i (16'd0),   // SCD2
     .serial_data3_i (16'd0),   // SCD3
+    .tm0_count_i (tm0_count), .tm0_control_i (tm0_control),
+    .tm1_count_i (tm1_count), .tm1_control_i (tm1_control),
+    .tm2_count_i (tm2_count), .tm2_control_i (tm2_control),
+    .tm3_count_i (tm3_count), .tm3_control_i (tm3_control),
+    .dma_disable_i (dma_disable),
     //---------------- Direct Sound FIFO write strobes ----------------
     //  No sound DMA path wired yet — leave outputs open.
     .fifo_a_we_o	(),
@@ -637,8 +936,10 @@ io_registers io_registers (
     //---------------- Interrupts ----------------
     .ie_o		(ie_reg),
     .if_o		(if_reg),
-    .wscnt_o	(),
-    .ime_o		(ime_reg)
+    .wscnt_o	(wscnt_reg),
+    .ime_o		(ime_reg),
+    .halt_request_o (halt_request),
+    .postflg_o (postflg)
 );
 
 ppu ppu (
@@ -727,7 +1028,7 @@ ppu ppu (
 
 // DMA0: 0x040000BA | DMA1: 0x040000C6 | DMA2: 0x040000D2 | DMA3: 0x040000DE
 // DMA0 channel
-dma #(.DMA_Control_Register_Addr (32'h0400_00BA)) dma0 (
+dma dma0 (
     .clock		(clock),
     .dmasad_o	(dma0sad_o),
     .dmadad_o	(dma0dad_o),
@@ -735,19 +1036,26 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00BA)) dma0 (
     .dmacnt_h_o (dma0cnt_h_o),
     .data_i	    (data_bus),
     .vblank		(ppu_vblank_start),
-    .hblank		(ppu_hblank_start),
-    .halt       (!mem_ready),
+    .hblank		(ppu_hblank_dma_start),
+    .special    (1'b0),
+    .halt       (dma_mem_hold),
+    .priority_hold (dma_priority_hold[0]),
+    .cpu_cycle_accepted (cpu_cycle_accepted),
     .src_addr	(addr_src_dma0),
     .dst_addr	(addr_dst_dma0),
     .data_o 	(data_dma0),
     .wr_en		(wr_en_dma0),
+    .seq		(SEQ_dma0),
     .MAS		(MAS_dma0),
+	.dma_pending	(dma_pending[0]),
+    .dma_request  (dma_request[0]),
+    .dma_disable  (dma_disable[0]),
     .dma_active	(dma_active[0]),
     .nIRQ		(nirq_dma0)
 );
 
 // DMA1 channel
-dma #(.DMA_Control_Register_Addr (32'h0400_00C6)) dma1 (
+dma dma1 (
     .clock		(clock),
     .dmasad_o	(dma1sad_o),
     .dmadad_o	(dma1dad_o),
@@ -755,19 +1063,26 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00C6)) dma1 (
     .dmacnt_h_o (dma1cnt_h_o),
     .data_i	    (data_bus),
     .vblank		(ppu_vblank_start),
-    .hblank		(ppu_hblank_start),
-    .halt       (!mem_ready),
+    .hblank		(ppu_hblank_dma_start),
+    .special    (1'b0),
+    .halt       (dma_mem_hold),
+    .priority_hold (dma_priority_hold[1]),
+    .cpu_cycle_accepted (cpu_cycle_accepted),
     .src_addr	(addr_src_dma1),
     .dst_addr	(addr_dst_dma1),
     .data_o 	(data_dma1),
     .wr_en		(wr_en_dma1),
+    .seq		(SEQ_dma1),
     .MAS		(MAS_dma1),
+	.dma_pending	(dma_pending[1]),
+    .dma_request  (dma_request[1]),
+    .dma_disable  (dma_disable[1]),
     .dma_active	(dma_active[1]),
     .nIRQ		(nirq_dma1)
 );
 
 // DMA2 channel
-dma #(.DMA_Control_Register_Addr (32'h0400_00D2)) dma2 (
+dma dma2 (
     .clock		(clock),
     .dmasad_o	(dma2sad_o),
     .dmadad_o	(dma2dad_o),
@@ -775,19 +1090,26 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00D2)) dma2 (
     .dmacnt_h_o (dma2cnt_h_o),
     .data_i	    (data_bus),
     .vblank		(ppu_vblank_start),
-    .hblank		(ppu_hblank_start),
-    .halt       (!mem_ready),
+    .hblank		(ppu_hblank_dma_start),
+    .special    (1'b0),
+    .halt       (dma_mem_hold),
+    .priority_hold (dma_priority_hold[2]),
+    .cpu_cycle_accepted (cpu_cycle_accepted),
     .src_addr	(addr_src_dma2),
     .dst_addr	(addr_dst_dma2),
     .data_o 	(data_dma2),
     .wr_en		(wr_en_dma2),
+    .seq		(SEQ_dma2),
     .MAS		(MAS_dma2),
+	.dma_pending	(dma_pending[2]),
+    .dma_request  (dma_request[2]),
+    .dma_disable  (dma_disable[2]),
     .dma_active	(dma_active[2]),
     .nIRQ		(nirq_dma2)
 );
 
 // DMA3 channel
-dma #(.DMA_Control_Register_Addr (32'h0400_00DE)) dma3 (
+dma dma3 (
     .clock		(clock),
     .dmasad_o	(dma3sad_o),
     .dmadad_o	(dma3dad_o),
@@ -795,13 +1117,20 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00DE)) dma3 (
     .dmacnt_h_o (dma3cnt_h_o),
     .data_i	    (data_bus),
     .vblank		(ppu_vblank_start),
-    .hblank		(ppu_hblank_start),
-    .halt       (!mem_ready),
+    .hblank		(ppu_hblank_dma_start),
+    .special    (ppu_video_dma_start),
+    .halt       (dma_mem_hold),
+    .priority_hold (dma_priority_hold[3]),
+    .cpu_cycle_accepted (cpu_cycle_accepted),
     .src_addr	(addr_src_dma3),
     .dst_addr	(addr_dst_dma3),
     .data_o 	(data_dma3),
     .wr_en		(wr_en_dma3),
+    .seq		(SEQ_dma3),
     .MAS		(MAS_dma3),
+	.dma_pending	(dma_pending[3]),
+    .dma_request  (dma_request[3]),
+    .dma_disable  (dma_disable[3]),
     .dma_active	(dma_active[3]),
     .nIRQ		(nirq_dma3)
 );
@@ -809,7 +1138,7 @@ dma #(.DMA_Control_Register_Addr (32'h0400_00DE)) dma3 (
 // {r[7][3:0],addr_bus[7:0], r[0][11:0]}
 // {r[0][7:0], addr_bus[27:24], addr_bus[15:0]}
 seg_display seg_display(
-    .in({r[0][7:0], addr_bus[27:24], addr_bus[11:0]}),
+    .in({8'd0, r[0][7:0], addr_bus[27:24], addr_bus[11:0]}),
 	.clk (clock),
 
     .s0(HEX0),

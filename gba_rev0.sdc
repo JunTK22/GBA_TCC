@@ -140,10 +140,6 @@ set_false_path -to [get_ports {LEDR[*]}]
 set mem_poins [get_pins -compatibility_mode {bios* iwram* palette_ram* vram* oam* cart_ram* io_registers*}]
 set_false_path -from [get_pins -compatibility_mode sdram_controller*] -to $mem_poins
 
-set_false_path -from [get_registers {sdram_controller_top:sdram_controller|rd_data_r2[*]}] -to [get_registers {sdram_controller_top:sdram_controller|wr_data_r[*]}]
-
-set_false_path -from [get_registers {*done*}] -to [get_registers {nWAIT}]
-
 #**************************************************************
 # Set Multicycle Path
 #**************************************************************

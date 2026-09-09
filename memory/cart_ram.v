@@ -5,6 +5,8 @@
 //  Memory map: 0x0E000000 - 0x0E00FFFF (also mirrored at 0x0F000000).
 //  Per CowBite §3: 8-bit port, used for save data. Modeled here as on-chip
 //  M10K — battery backing, flash erase semantics, etc. are out of scope.
+//  This is the legacy local wrapper; the current synthesis top does not
+//  instantiate it and instead maps Cart RAM through `sdram_controller_top.v`.
 //
 //  CPU interface is byte-addressed, but this module accepts byte, halfword, and
 //  word `size` encodings. Halfword/word accesses are sequenced internally across

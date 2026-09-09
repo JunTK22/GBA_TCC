@@ -175,6 +175,10 @@ module compositor (
     wire is_obj_blend;
     wire [1:0] selected_blend_effect;
     wire blend_enabled;
+    wire layer_first_selected;
+    wire layer_second_selected;
+    wire layer_is_obj_blend;
+    wire layer_second_palette_needed;
 
     reg [14:0] effect_color_b;
     reg [4:0] effect_weight_a;
@@ -240,6 +244,22 @@ module compositor (
             || (is_obj_blend && blend_second_selected))
         && !((selected_blend_effect == EFFECT_ALPHA)
              && !blend_second_selected);
+
+    // `layer_*` is the pixel currently issuing palette requests; `blend_*`
+    // receives it in phase 3. Only alpha blending consumes the second colour.
+    assign layer_first_selected =
+        (layer_first_backdrop && blend_top_backdrop)
+        || (layer_first_obj && blend_top_obj)
+        || (|(layer_first_bg & blend_top_bg));
+    assign layer_second_selected =
+        (layer_second_backdrop && blend_bottom_backdrop)
+        || (layer_second_obj && blend_bottom_obj)
+        || (|(layer_second_bg & blend_bottom_bg));
+    assign layer_is_obj_blend = layer_first_obj && layer_obj_blend;
+    assign layer_second_palette_needed = layer_second_selected
+        && (layer_is_obj_blend
+            || (layer_window_blend && (blend_effect == EFFECT_ALPHA)
+                && layer_first_selected));
 
     // Window selection applies to the object and backgrounds of the next
     // pixel. Window 0 has priority over window 1 and the object window.
@@ -354,7 +374,7 @@ module compositor (
             object_index = fetch_x;
         end
 
-        if (enable && active) begin
+        if (enable && active && !display_force_blank) begin
             if (tick >= 11'd46) begin
                 case (phase)
                     PHASE_TOP_REQUEST: begin
@@ -369,14 +389,17 @@ module compositor (
                         end
                     end
                     PHASE_BOTTOM_REQUEST: begin
-                        if (layer_second_backdrop) begin
-                            palette_read = 1'b1;
-                            palette_address = 9'd0;
-                        end else if (!(layer_second_bg[2]
-                                       && is_bitmap_16bpp)) begin
-                            palette_read = 1'b1;
-                            palette_address = {
-                                layer_second_obj, layer_second_color[7:0]};
+                        if (layer_second_palette_needed) begin
+                            if (layer_second_backdrop) begin
+                                palette_read = 1'b1;
+                                palette_address = 9'd0;
+                            end else if (!(layer_second_bg[2]
+                                           && is_bitmap_16bpp)) begin
+                                palette_read = 1'b1;
+                                palette_address = {
+                                    layer_second_obj,
+                                    layer_second_color[7:0]};
+                            end
                         end
                     end
                     default: begin end

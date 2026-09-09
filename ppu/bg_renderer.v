@@ -10,8 +10,14 @@
 //
 //  Each background has an independent valid/ready pixel lane. Verilog-2001
 //  ports are flattened with BG0 in the least-significant packed element.
-//  Affine-reference write pulses reload the internal BG2/BG3 coordinates;
-//  vertical mosaic and scanline/frame progression update those coordinates.
+//  `display_enable_bg` keeps each live fetch pipeline cycle-aligned, while
+//  `display_effective_enable_bg` qualifies end-of-line affine advancement with
+//  both the current and cycle-40-latched enables. It excludes force blank.
+//  `display_access_bg` separately qualifies physical VRAM requests after the
+//  parent applies the delayed DISPCNT enable/force-blank rules. Affine-reference
+//  write pulses reload the internal BG2/BG3 coordinates; vertical mosaic and
+//  scanline/frame progression update those coordinates. Text tile-data reads
+//  already armed at the visible cutoff are allowed to finish in HBlank.
 // =============================================================================
 module bg_renderer (
     input                            clock,
@@ -21,6 +27,8 @@ module bg_renderer (
     input      [2:0]                 display_mode,
     input                            display_frame,
     input      [3:0]                 display_enable_bg,
+    input      [3:0]                 display_effective_enable_bg,
+    input      [3:0]                 display_access_bg,
 
     input      [7:0]                 bg_size,
     input      [3:0]                 bg_affine_wrap,
@@ -93,6 +101,7 @@ module bg_renderer (
     wire [15:0]                    regular_y          [0:3];
     wire                           regular_fetch_4bpp [0:3];
     wire                           regular_fetch_8bpp [0:3];
+    wire [3:0]                     regular_tail_pending;
     wire [10:0]                    regular_start_tick [0:3];
 
     wire [37:0]                    bitmap_linear_240;
@@ -292,6 +301,9 @@ module bg_renderer (
             assign regular_fetch_4bpp[regular_g] = (tile_stage[regular_g][1:0] == 2'd1)
                                                   && !bg_bpp8_i[regular_g];
             assign regular_fetch_8bpp[regular_g] = tile_stage[regular_g][0] && bg_bpp8_i[regular_g];
+            assign regular_tail_pending[regular_g] =
+                (tile_stage[regular_g] != 3'd0)
+                || (state[regular_g] == PHASE_WAIT_B);
             assign regular_start_tick[regular_g] = START_BASE
                                           - {6'b0, bg_off_x_i[regular_g][2:0], 2'b0};
         end
@@ -345,8 +357,14 @@ module bg_renderer (
 
             if (tick == 11'd1005) begin
                 for (i = 0; i < 4; i = i + 1) begin
-                    state[i] <= PHASE_REQUEST;
-                    tile_stage[i] <= 3'd0;
+                    // Maps issued at ticks 1003-1005 are real accesses but do
+                    // not arm tile reads. A tick-1002 map has reached WAIT_B,
+                    // so retain only that or a later unfinished text stage.
+                    if (!(regular_selected[i] && layer_active[i]
+                          && regular_tail_pending[i])) begin
+                        state[i] <= PHASE_REQUEST;
+                        tile_stage[i] <= 3'd0;
+                    end
                 end
             end
         end
@@ -367,20 +385,21 @@ module bg_renderer (
         for (i = 0; i < 4; i = i + 1) begin
             if (regular_selected[i] && enable && layer_active[i]
                 && (state[i] == PHASE_REQUEST)) begin
-                if (tile_stage[i] == 3'd0) begin
+                if (display_access_bg[i] && (tile_stage[i] == 3'd0)
+                    && (tick <= 11'd1005)) begin
                     vram_read = 1'b1;
                     vram_address = regular_map_address(
                         bg_screen_base_i[i], bg_size_i[i], regular_x[i], regular_y[i]
                     );
                 end
-                if (regular_fetch_4bpp[i]) begin
+                if (display_access_bg[i] && regular_fetch_4bpp[i]) begin
                     vram_address = regular_4bpp_address(
                         bg_char_base_i[i], layer_tile[i], layer_flip_x[i],
                         layer_flip_y[i], regular_y[i], tile_stage[i]
                     );
                     vram_read = vram_address < 16'h8000;
                 end
-                if (regular_fetch_8bpp[i]) begin
+                if (display_access_bg[i] && regular_fetch_8bpp[i]) begin
                     vram_address = regular_8bpp_address(
                         bg_char_base_i[i], layer_tile[i], layer_flip_x[i],
                         layer_flip_y[i], regular_y[i], tile_stage[i]
@@ -388,7 +407,7 @@ module bg_renderer (
                     vram_read = vram_address < 16'h8000;
                 end
 
-                if (tick >= 11'd39) begin
+                if ((tick >= 11'd39) && (tick <= 11'd1005)) begin
                     enqueue_valid[i] = 1'b1;
                     enqueue_opaque[i] = layer_pixel_opaque[i][0];
                     enqueue_color[i] = layer_pixel_color[i][0];
@@ -398,13 +417,15 @@ module bg_renderer (
 
         for (a = 0; a < 2; a = a + 1) begin
             if (affine_selected[a] && enable && layer_active[a + 2]) begin
-                if (state[a + 2] == PHASE_REQUEST) begin
+                if (display_access_bg[a + 2]
+                    && (state[a + 2] == PHASE_REQUEST)) begin
                     vram_read = 1'b1;
                     vram_address = affine_map_address(
                         bg_screen_base_i[a + 2], bg_size_i[a + 2], aff_x[a], aff_y[a]
                     );
                 end
-                if (state[a + 2] == PHASE_USE) begin
+                if (display_access_bg[a + 2]
+                    && (state[a + 2] == PHASE_USE)) begin
                     vram_read = 1'b1;
                     vram_address = affine_tile_address(
                         bg_char_base_i[a + 2],
@@ -427,7 +448,7 @@ module bg_renderer (
         end
 
         if (bitmap_selected && enable && layer_active[2]) begin
-            if (state[2] == PHASE_REQUEST) begin
+            if (display_access_bg[2] && (state[2] == PHASE_REQUEST)) begin
                 vram_read = 1'b1;
                 case (display_mode)
                     3'd3: vram_address = bitmap_linear_240[15:0];
@@ -591,27 +612,51 @@ module bg_renderer (
             if (enable && is_vdraw) begin
                 if (tick == 11'd1005) begin
                     for (i = 0; i < 4; i = i + 1) begin
-                        layer_active[i] <= 1'b0;
-                        layer_pos[i] <= 8'd0;
+                        if (!(regular_selected[i] && layer_active[i]
+                              && regular_tail_pending[i])) begin
+                            layer_active[i] <= 1'b0;
+                            layer_pos[i] <= 8'd0;
+                        end
                     end
+                end
 
+                // Commit the following line's affine references at hardware
+                // cycle 1232, after HBlank writes to PB/PD have settled.
+                if (tick == 11'd1231) begin
                     for (a = 0; a < 2; a = a + 1) begin
-                        aff_x[a] <= aff_line_next_x[a];
-                        aff_y[a] <= aff_line_next_y[a];
-                        aff_x_line[a] <= aff_line_next_x[a];
-                        aff_y_line[a] <= aff_line_next_y[a];
-                        if (mosaic_counter == mosaic_y) begin
-                            aff_x_mosaic[a] <= aff_line_next_x[a];
-                            aff_y_mosaic[a] <= aff_line_next_y[a];
-                        end else if (bg_mosaic_i[a + 2]) begin
-                            aff_x[a] <= aff_x_mosaic[a];
-                            aff_y[a] <= aff_y_mosaic[a];
+                        if (display_effective_enable_bg[a + 2]
+                            && (((a == 0) && (display_mode >= 3'd1)
+                                 && (display_mode <= 3'd5))
+                                || ((a == 1) && (display_mode == 3'd2)))) begin
+                            aff_x[a] <= aff_line_next_x[a];
+                            aff_y[a] <= aff_line_next_y[a];
+                            aff_x_line[a] <= aff_line_next_x[a];
+                            aff_y_line[a] <= aff_line_next_y[a];
+                            if (mosaic_counter == mosaic_y) begin
+                                aff_x_mosaic[a] <= aff_line_next_x[a];
+                                aff_y_mosaic[a] <= aff_line_next_y[a];
+                            end else if (bg_mosaic_i[a + 2]) begin
+                                aff_x[a] <= aff_x_mosaic[a];
+                                aff_y[a] <= aff_y_mosaic[a];
+                            end
                         end
                     end
 
                     mosaic_counter <= mosaic_counter + 4'd1;
                     if (mosaic_counter == mosaic_y) begin
                         mosaic_counter <= 4'd0;
+                    end
+                end
+
+                // Tail pixels are discarded by the cutoff FIFO flush. Stop
+                // the retained text pipeline once its eight-stage tile group
+                // has completed, leaving REQUEST/stage zero for the next line.
+                for (i = 0; i < 4; i = i + 1) begin
+                    if ((tick >= 11'd1005) && layer_active[i]
+                        && (state[i] == PHASE_WAIT_B)
+                        && (tile_stage[i] == 3'd7)) begin
+                        layer_active[i] <= 1'b0;
+                        layer_pos[i] <= 8'd0;
                     end
                 end
             end

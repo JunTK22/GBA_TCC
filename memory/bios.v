@@ -4,11 +4,14 @@
 //
 //  Memory map: 0x00000000 - 0x00003FFF.
 //  The current bring-up top uses this as the CPU boot ROM and initializes it
-//  from the top-level `INIT_FILE` parameter.
+//  from the top-level `BIOS_INIT_FILE` parameter.
 //
 //  Read-only M10K-backed storage with byte/halfword/word read formatting,
 //  optional sign extension, and combinational alignment-ready reporting.
-//  Misalignment is reported on the registered read qualifier path.
+//  Misalignment is reported on the registered read qualifier path. While the
+//  CPU is executing inside BIOS, successful opcode fetches update a protected
+//  opcode latch. Data-side or DMA reads made after execution leaves BIOS expose
+//  that retained opcode rather than unrestricted ROM contents.
 // =============================================================================
 
 `timescale 1ns / 1ps
@@ -17,11 +20,13 @@ module bios #(
     parameter INIT_FILE = "code/assembly_code/bios.mif"
 )(
     input  wire        clk,
-    input  wire [13:0] addr,        // word address (4096 32-bit words = 16 KB)
+    input  wire [13:0] addr,        // byte address within the 16 KiB BIOS
     output wire [31:0] rdata,
     input  wire        rden,
     input  wire [1:0]  size,           // 00=byte 01=half 10=word
     input  wire        sign_extend,    // sign-extend on read
+    input  wire        access_allowed, // CPU currently executing in BIOS
+    input  wire        opcode_fetch,   // successful CPU opcode-side access
 
     // Status
     output wire        ready,          // 1 unless fault
@@ -82,13 +87,30 @@ module bios #(
     reg [1:0] byte_lane_q = 2'b0;
     reg       sign_extend_q = 0;
     reg       misalign_q = 0;
+    reg       access_allowed_q = 0;
+    reg       capture_opcode_q = 0;
+    reg [31:0] protected_opcode = 0;
 
     always @(posedge clk) begin
         size_q        <= size;
         byte_lane_q   <= byte_lane;
         sign_extend_q <= sign_extend;
         misalign_q    <= misalign_comb;
+        if (rden) begin
+            access_allowed_q <= access_allowed;
+            capture_opcode_q <= access_allowed && opcode_fetch;
+        end else begin
+            capture_opcode_q <= 1'b0;
+        end
+
+        // `capture_opcode_q` and `read_data` both describe the preceding
+        // synchronous ROM request at this edge.
+        if (capture_opcode_q)
+            protected_opcode <= read_data;
     end
+
+    wire [31:0] visible_data = access_allowed_q ? read_data
+                                                : protected_opcode;
 
     // -------------------------------------------------------------------------
     //  Output formatting (combinational on the registered read data)
@@ -100,20 +122,21 @@ module bios #(
     always @(*) begin
         // Byte select
         case (byte_lane_q)
-            2'b00: byte_sel = read_data[ 7: 0];
-            2'b01: byte_sel = read_data[15: 8];
-            2'b10: byte_sel = read_data[23:16];
-            2'b11: byte_sel = read_data[31:24];
+            2'b00: byte_sel = visible_data[ 7: 0];
+            2'b01: byte_sel = visible_data[15: 8];
+            2'b10: byte_sel = visible_data[23:16];
+            2'b11: byte_sel = visible_data[31:24];
         endcase
 
         // Halfword select
-        half_sel = byte_lane_q[1] ? read_data[31:16] : read_data[15:0];
+        half_sel = byte_lane_q[1] ? visible_data[31:16]
+                                  : visible_data[15:0];
 
         // Final mux
         case (size_q)
             SIZE_BYTE: rdata_next = sign_extend_q ? {{24{byte_sel[7]}},  byte_sel} : {24'h0, byte_sel};
             SIZE_HALF: rdata_next = sign_extend_q ? {{16{half_sel[15]}}, half_sel} : {16'h0, half_sel};
-            SIZE_WORD: rdata_next = read_data;
+            SIZE_WORD: rdata_next = visible_data;
             default:   rdata_next = 32'h0;
         endcase
     end

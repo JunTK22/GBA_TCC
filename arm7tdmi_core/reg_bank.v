@@ -28,6 +28,13 @@
 // - PC has dedicated write port (used by BX, data processing to r15, branches)
 // - Fully synthesizable on any FPGA (distributed RAM or registers, ~1.2 kbits)
 // - No block RAM required — tiny logic.
+//
+// Current sequencing assumptions:
+// - `cpsr_mode` is already the exception destination mode during entry, so LR
+//   and SPSR writes land in the new bank while the old CPSR is still available.
+// - A flag-setting write to r15 restores CPSR from the active SPSR.
+// - PC writes are aligned to the resulting ARM/Thumb state; BX uses the raw
+//   operand bit 0 before that bit is removed from the architectural PC.
 // =============================================================================
 
 module reg_bank (
@@ -175,6 +182,7 @@ module reg_bank (
                     r_sp_lr[bank_idx(cpsr_mode)][rd_addr-13] <= write_data;
                 end else if (rd_addr == 15) begin
                     if (PSR_wr_en && set_condition_f && spsr_idx(cpsr_mode) != -1) pc_reg <= spsr_reg[spsr_idx(cpsr_mode)][5] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
+                    else if (set_thumb) pc_reg <= write_data[0] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
                     else pc_reg <= cpsr_reg[5] ? {write_data[31:1], 1'b0} : {write_data[31:2], 2'b00};
                 end
             end
@@ -273,7 +281,7 @@ module reg_bank (
         else if (ra < 15)
             rd_a_int = r_sp_lr[bank_idx(cpsr_mode)][ra-13];
         else
-            rd_a_int = pc_reg;               // r15 → current PC (pipeline adds +8/+4)
+            rd_a_int = pc_reg;         // r15 → architectural PC for the active instruction
     end
 
     always @* begin

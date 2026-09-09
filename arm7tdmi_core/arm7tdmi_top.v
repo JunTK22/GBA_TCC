@@ -4,9 +4,15 @@
 //
 //  Wires the decoder, register bank, ALU, barrel shifter, multiplier, address
 //  register, incrementer, and write-data register around the ARM external bus
-//  interface. `nWAIT` gates the local CPU clock for external stalls. Exception
-//  entry mode selection is forwarded into the register bank so banked LR/SPSR
-//  writes target the new mode immediately.
+//  interface. `nWAIT` gates the local CPU clock, so a stretched external cycle
+//  freezes the decoder and datapath together. The decoder owns S/N/I sequencing
+//  and the external nMREQ/nOPC/SEQ qualifiers.
+//
+//  Exception-entry mode selection is forwarded into the register bank so the
+//  banked LR and SPSR writes target the destination mode immediately. The
+//  address path aligns BX targets according to operand bit 0, aligns Thumb
+//  literal loads to four bytes, and uses the loaded address directly for
+//  POP {...,PC} pipeline refill.
 // =============================================================================
 
 module arm7tdmi_top (
@@ -84,6 +90,7 @@ module arm7tdmi_top (
     reg [31:0] wr_data;
 
     wire [31:0] CPSR;
+    wire [31:0] SPSR;
     assign CPSR_o = CPSR;
 
     reg [4:0]  cpsr_mode;
@@ -138,6 +145,27 @@ module arm7tdmi_top (
     wire [31:0] Rn_data;
     wire [31:0] Rs_data;
     wire [31:0] Rm_data;
+    wire        load_f;
+    wire        pc_lr_f;
+
+    localparam [5:0] THUMB_PC_REL_LOAD = 6'd21;
+    localparam [5:0] THUMB_PUSH_POP    = 6'd29;
+
+    // BX writes the raw register value through the ALU, including its state
+    // selector in bit 0. The architectural PC write already strips that bit;
+    // give the parallel refill-address path the same alignment so an odd Thumb
+    // target cannot become a permanently misaligned instruction request.
+    // Thumb literal loads instead use Align(PC, 4) as their address base.
+    wire [31:0] address_alu_bus = set_thumb_bit
+                               ? (Rm_data[0]
+                                  ? {Alu_bus[31:1], 1'b0}
+                                  : {Alu_bus[31:2], 2'b00})
+                               : ((Inst_decoded == THUMB_PUSH_POP) &&
+                                  load_f && pc_lr_f)
+                               ? {Alu_bus[31:1], 1'b0}
+                               : (Inst_decoded == THUMB_PC_REL_LOAD)
+                               ? {Alu_bus[31:2], 2'b00}
+                               : Alu_bus;
 
     // Data coming out of decoder
     wire [31:0] Mem_Data_reg_in;
@@ -167,7 +195,6 @@ module arm7tdmi_top (
     wire        mult_long_f;
     wire        byte_word_f;
     wire        hw_byte_f;
-    wire        load_f;
     wire        pre_pos_indx_f;
     wire        up_down_f;
     wire        write_back_f;
@@ -180,7 +207,6 @@ module arm7tdmi_top (
     wire        h1_f;
     wire        h2_f;
     wire        sp_f;
-    wire        pc_lr_f;
     wire        low_high_off_f;
     wire        shifter_reg_f;
     wire        signEx_f;
@@ -349,7 +375,7 @@ module arm7tdmi_top (
 
     address_reg address_reg (
         .Incrementer    (Incrementer_bus),
-        .ALU            (Alu_bus),
+        .ALU            (address_alu_bus),
         .PC             (PC_bus),
         .Rn             (Rn_data),
 
@@ -393,7 +419,7 @@ module arm7tdmi_top (
 
         .nzcv               (nzcv),
         .reg_cond_field     (Alu_bus[31:28]),
-
+		.bx_target_thumb   (Rm_data[0]),
         .Data_o             (Mem_Data_reg_in),
 
         .Inst_decoded_o     (Inst_decoded),

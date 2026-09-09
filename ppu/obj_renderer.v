@@ -1,10 +1,11 @@
 `timescale 1ns/1ps
 `default_nettype none
 
-// The explicit OAM FSM scans attributes and affine parameters. The OBJ VRAM
-// pipeline retains the Scala renderer's even-tick request/odd-tick consume
-// cadence. VRAM addresses are 14-bit halfword indices within OBJ character
-// VRAM; OAM addresses are 32-bit word indices. buffer_data is packed as:
+// The explicit OAM FSM scans attributes and affine parameters. The live OBJ
+// enable bit gates both it and the OBJ VRAM pipeline; force blank does not.
+// Fetches retain the even-tick request/odd-tick consume cadence. VRAM addresses
+// are 14-bit halfword indices within OBJ character VRAM; OAM addresses are
+// 32-bit word indices. buffer_data is packed as:
 //   {opaque, color[7:0], prio[1:0], window, blend, mosaic}.
 module obj_renderer (
     input              clock,
@@ -38,7 +39,6 @@ module obj_renderer (
     localparam [2:0] OAM_PB     = 3'd3;
     localparam [2:0] OAM_PC     = 3'd4;
     localparam [2:0] OAM_PD     = 3'd5;
-    localparam [2:0] OAM_START  = 3'd6;
     localparam [2:0] OAM_DONE   = 3'd7;
 
     reg active;
@@ -102,7 +102,6 @@ module obj_renderer (
     reg signed [15:0] fetch_pa;
     reg signed [15:0] fetch_pb;
     reg signed [15:0] fetch_pc;
-    reg signed [15:0] fetch_pd;
 
     reg [6:0] oam_index;
     reg [6:0] next_oam_index;
@@ -131,6 +130,7 @@ module obj_renderer (
     reg [2:0] fetch_subtile_y;
     reg [2:0] fetch_tile_stride;
     reg [9:0] fetch_tile_offset;
+    wire fetch_coord_in_bounds;
 
     wire [15:0] attr0;
     wire [15:0] attr1;
@@ -142,6 +142,10 @@ module obj_renderer (
     wire [7:0] decoded_bounding_h;
     wire [7:0] decoded_y_max;
     wire decoded_in_range;
+    wire [8:0] decoded_x_magnitude;
+    wire [8:0] decoded_left_clip;
+    wire [8:0] decoded_bounding_w;
+    wire decoded_fully_left;
 
     wire [8:0] fetch_width_pixels;
     wire [8:0] fetch_height_pixels;
@@ -151,6 +155,7 @@ module obj_renderer (
     wire signed [9:0] affine_offset_y;
     wire signed [27:0] affine_start_x;
     wire signed [27:0] affine_start_y;
+    wire signed [15:0] affine_pd_return;
 
     function [3:0] object_width_tiles;
         input [1:0] shape;
@@ -282,6 +287,14 @@ module obj_renderer (
     assign decoded_in_range =
         ((render_y >= attr0[7:0]) || (decoded_y_max < attr0[7:0]))
         && (render_y < decoded_y_max);
+    assign decoded_x_magnitude = (~attr1[8:0]) + 9'd1;
+    assign decoded_left_clip = attr0[8]
+        ? decoded_x_magnitude : {decoded_x_magnitude[8:1], 1'b0};
+    assign decoded_bounding_w = (attr0[8] && attr0[9])
+        ? ({5'd0, decoded_width} << 4)
+        : ({5'd0, decoded_width} << 3);
+    assign decoded_fully_left = (attr1[8:0] >= 9'd240)
+        && (decoded_left_clip >= decoded_bounding_w);
 
     assign fetch_width_pixels = {4'd0, fetch_obj_w} << 3;
     assign fetch_height_pixels = {4'd0, fetch_obj_h} << 3;
@@ -295,9 +308,13 @@ module obj_renderer (
     assign affine_start_x =
         ($signed(fetch_pb) * $signed(affine_offset_y))
         + ($signed(fetch_pa) * $signed(affine_offset_x));
+    assign affine_pd_return = $signed(oam_read_data[31:16]);
     assign affine_start_y =
-        ($signed(fetch_pd) * $signed(affine_offset_y))
+        ($signed(affine_pd_return) * $signed(affine_offset_y))
         + ($signed(fetch_pc) * $signed(affine_offset_x));
+    assign fetch_coord_in_bounds =
+        (fetch_coord_col < ({12'd0, fetch_obj_tex_w} << 3))
+        && (fetch_coord_row < ({12'd0, fetch_obj_tex_h} << 3));
 
     wire draw_buffer_read = enable && !reset
         && (draw_count != 2'd0) && (draw_x < 9'd240);
@@ -385,10 +402,11 @@ module obj_renderer (
         next_state = state;
         next_oam_index = oam_index;
 
-        if (enable && active && allow_oam && !even_tick) begin
+        if (enable && display_enable_obj && active && allow_oam && !even_tick) begin
             case (state)
                 OAM_ATTR01: begin
-                    if (decoded_in_range && !(attr0[9] && !attr0[8])) begin
+                    if (decoded_in_range && !(attr0[9] && !attr0[8])
+                        && !decoded_fully_left) begin
                         next_state = OAM_ATTR2;
                     end else if (oam_index == 7'd127) begin
                         next_state = OAM_DONE;
@@ -412,8 +430,7 @@ module obj_renderer (
                 OAM_PA: next_state = OAM_PB;
                 OAM_PB: next_state = OAM_PC;
                 OAM_PC: next_state = OAM_PD;
-                OAM_PD: next_state = OAM_START;
-                OAM_START: begin
+                OAM_PD: begin
                     if (oam_index == 7'd127) begin
                         next_state = OAM_DONE;
                         next_oam_index = 7'd0;
@@ -433,7 +450,7 @@ module obj_renderer (
     always @* begin
         oam_read = 1'b0;
         oam_address = 8'd0;
-        if (enable && active && allow_oam && even_tick) begin
+        if (enable && display_enable_obj && active && allow_oam && even_tick) begin
             case (state)
                 OAM_ATTR01: begin
                     oam_read = 1'b1;
@@ -499,7 +516,8 @@ module obj_renderer (
         fetch_tile_offset = {6'd0, fetch_tile_x}
             + ({6'd0, fetch_tile_y} << fetch_tile_stride);
 
-        if (enable && fetch_active && even_tick) begin
+        if (enable && display_enable_obj && fetch_active && even_tick
+            && (!fetch_obj_affine || fetch_coord_in_bounds)) begin
             vram_read = 1'b1;
             if (fetch_obj_bpp8) begin
                 vram_address = ({6'd0, fetch_tile_offset} << 5)
@@ -522,7 +540,6 @@ module obj_renderer (
         reg [3:0] pixel_nibble;
         reg [1:0] nibble_index0;
         reg [1:0] nibble_index1;
-        reg affine_in_bounds;
 
         if (reset) begin
             active <= 1'b0;
@@ -555,7 +572,6 @@ module obj_renderer (
             fetch_pa <= 16'sd0;
             fetch_pb <= 16'sd0;
             fetch_pc <= 16'sd0;
-            fetch_pd <= 16'sd0;
             oam_index <= 7'd0;
             state <= OAM_ATTR01;
             oam_affine_index <= 5'd0;
@@ -602,7 +618,7 @@ module obj_renderer (
             end
 
             // Register the next OAM state and consume returned OAM data.
-            if (active && allow_oam) begin
+            if (display_enable_obj && active && allow_oam) begin
                 state <= next_state;
                 oam_index <= next_oam_index;
 
@@ -664,9 +680,10 @@ module obj_renderer (
                         OAM_PA: fetch_pa <= oam_read_data[31:16];
                         OAM_PB: fetch_pb <= oam_read_data[31:16];
                         OAM_PC: fetch_pc <= oam_read_data[31:16];
-                        OAM_PD: fetch_pd <= oam_read_data[31:16];
-
-                        OAM_START: begin
+                        OAM_PD: begin
+                            // PD is the synchronous return from the preceding
+                            // even-tick request. Submit here so the next even
+                            // tick is available to both VRAM and OAM.
                             fetch_active <= 1'b1;
                             fetch_col <= affine_start_col;
                             if ((fetch_obj_x >= 9'd240)
@@ -683,7 +700,7 @@ module obj_renderer (
             end
 
             // Consume VRAM data on odd ticks and advance the fetch column.
-            if (fetch_active) begin
+            if (display_enable_obj && fetch_active) begin
                 if (!even_tick) begin
                     if (!fetch_obj_affine) begin
                         draw_x <= fetch_obj_x + fetch_col - 9'd1;
@@ -718,9 +735,6 @@ module obj_renderer (
                             pixel_opaque1, color1, fetch_obj_priority,
                             fetch_obj_window, fetch_obj_blend, fetch_obj_mosaic);
                     end else begin
-                        affine_in_bounds =
-                            (fetch_coord_col < ({12'd0, fetch_obj_tex_w} << 3))
-                            && (fetch_coord_row < ({12'd0, fetch_obj_tex_h} << 3));
                         draw_x <= fetch_obj_x + fetch_col;
                         draw_count <= 2'd1;
                         if (fetch_obj_bpp8) begin
@@ -734,7 +748,7 @@ module obj_renderer (
                             pixel_opaque0 = pixel_nibble != 4'd0;
                         end
                         draw_data0 <= make_buffer_entry(
-                            affine_in_bounds && pixel_opaque0,
+                            fetch_coord_in_bounds && pixel_opaque0,
                             color0, fetch_obj_priority, fetch_obj_window,
                             fetch_obj_blend, fetch_obj_mosaic);
                         fetch_aff_x <= $signed(fetch_aff_x) + $signed(fetch_pa);
@@ -742,7 +756,7 @@ module obj_renderer (
                     end
 
                     if (fetch_obj_affine) begin
-                        allow_oam <= ((fetch_col + 8'd2) >> 3) == fetch_obj_w;
+                        allow_oam <= ((fetch_col + 8'd1) >> 3) == fetch_obj_w;
                     end else begin
                         allow_oam <= ((fetch_col + 8'd3) >> 3) == fetch_obj_w;
                     end
@@ -756,7 +770,7 @@ module obj_renderer (
                         if (!(active && allow_oam && !even_tick
                               && (((state == OAM_ATTR2)
                                    && !oam_attrs_affine)
-                                  || (state == OAM_START)))) begin
+                                  || (state == OAM_PD)))) begin
                             fetch_active <= 1'b0;
                         end
                     end else begin
@@ -765,27 +779,17 @@ module obj_renderer (
                 end
             end
 
-            // Object rendering prepares the following scanline.
+            // Finalize the current fetch interval before the next page boundary.
             if (active && (tick == (display_hblank_free ? 11'd1005 : 11'd39))) begin
                 active <= 1'b0;
+                fetch_active <= 1'b0;
             end
 
-            if (display_enable_obj
-                && ((scanline < 8'd160) || (scanline == 8'd227))
+            // Swap every completed visible-line buffer even when OBJ is disabled.
+            // Line 159 has no following visible line, so it swaps without starting
+            // another renderer. Line 227 initializes the frame's first line.
+            if (((scanline < 8'd160) || (scanline == 8'd227))
                 && (tick == 11'd39)) begin
-                active <= 1'b1;
-                render_y <= scanline + 8'd1;
-                mosaic_counter <= mosaic_counter + 4'd1;
-                if (mosaic_counter == mosaic_y) begin
-                    mosaic_counter <= 4'd0;
-                    render_y_mosaic <= scanline + 8'd1;
-                end
-                if (scanline == 8'd227) begin
-                    render_y <= 8'd0;
-                    render_y_mosaic <= 8'd0;
-                    mosaic_counter <= 4'd0;
-                end
-
                 buffer_page <= !buffer_page;
                 if (buffer_page == 1'b0) begin
                     buffer1_valid <= 240'd0;
@@ -793,11 +797,27 @@ module obj_renderer (
                     buffer0_valid <= 240'd0;
                 end
 
-                oam_index <= 7'd0;
-                state <= OAM_ATTR01;
-                allow_oam <= 1'b1;
-                fetch_active <= 1'b0;
                 draw_count <= 2'd0;
+
+                if ((scanline < 8'd159) || (scanline == 8'd227)) begin
+                    active <= 1'b1;
+                    render_y <= scanline + 8'd1;
+                    mosaic_counter <= mosaic_counter + 4'd1;
+                    if (mosaic_counter == mosaic_y) begin
+                        mosaic_counter <= 4'd0;
+                        render_y_mosaic <= scanline + 8'd1;
+                    end
+                    if (scanline == 8'd227) begin
+                        render_y <= 8'd0;
+                        render_y_mosaic <= 8'd0;
+                        mosaic_counter <= 4'd0;
+                    end
+
+                    oam_index <= 7'd0;
+                    state <= OAM_ATTR01;
+                    allow_oam <= 1'b1;
+                    fetch_active <= 1'b0;
+                end
             end
         end
     end

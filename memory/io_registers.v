@@ -1,11 +1,13 @@
 // =============================================================================
 //  io_registers.v
-//  GBA memory-mapped IO register file for 0x04000000-0x040003FF.
+//  GBA memory-mapped IO register file for 0x04000000-0x040003FF, plus the
+//  mirrored internal-memory-control word at 0x04000800.
 //
 //  The CPU/DMA port is byte addressed and 32 bits wide. Register storage uses
 //  16-bit `regs[hw_idx]` entries; named DMA, PPU, interrupt, serial, and sound
 //  outputs are combinational views of those entries. Reads are registered with
-//  one cycle of latency, matching the other local bus regions.
+//  one cycle of latency, matching the other local bus regions. Unimplemented
+//  and write-only fields return the retained CPU opcode supplied on open_bus_i.
 //
 //  The register set follows CowBite section 10 / gba.h. These categories need
 //  special semantics:
@@ -34,6 +36,16 @@
 //    6.  Affine reference reload:
 //          A write to either half of BG2X/BG2Y/BG3X/BG3Y emits a one-cycle
 //          `write_aff_*_o` pulse so the PPU reloads its internal reference.
+//
+//    7.  System control:
+//          POSTFLG/HALTCNT accept only BIOS-originated activity. POSTFLG is
+//          sticky to reset; HALTCNT emits a write strobe. The internal-memory
+//          control word at offset 0x800 has its documented 64 KiB mirrors.
+//
+//    8.  Timers and DMA completion:
+//          TM0-TM3 storage lives in `gba_timers`; live count/control inputs are
+//          spliced into reads. DMA_END pulses clear the corresponding CNT_H
+//          enable bit without synthesizing an external bus write.
 // =============================================================================
 
 `timescale 1ns / 1ps
@@ -43,8 +55,10 @@ module io_registers (
     input  wire        reset_n,
 
     // ---------------- CPU bus ----------------
-    input  wire [9:0]  addr,           // byte address within 1 KB IO space
+    input  wire [11:0] addr,           // byte address within the IO aperture
     input  wire [31:0] wdata,
+    input  wire [31:0] open_bus_i,
+    input  wire        system_write_enable_i,
     output reg  [31:0] rdata,
     input  wire        we,
     input  wire        rden,
@@ -65,6 +79,11 @@ module io_registers (
     input  wire [15:0] serial_data1_i,     // SCD1
     input  wire [15:0] serial_data2_i,     // SCD2
     input  wire [15:0] serial_data3_i,     // SCD3
+    input  wire [15:0] tm0_count_i, tm0_control_i,
+    input  wire [15:0] tm1_count_i, tm1_control_i,
+    input  wire [15:0] tm2_count_i, tm2_control_i,
+    input  wire [15:0] tm3_count_i, tm3_control_i,
+    input  wire [3:0]  dma_disable_i,
 
     // ---------------- Direct Sound FIFO write strobes ----------------
     output wire        fifo_a_we_o,
@@ -135,7 +154,9 @@ module io_registers (
     output wire [15:0] ie_o,
     output wire [15:0] if_o,
     output wire [15:0] wscnt_o,
-    output wire [15:0] ime_o
+    output wire [15:0] ime_o,
+    output wire        halt_request_o,
+    output wire        postflg_o
 );
 
     // -------------------------------------------------------------------------
@@ -269,11 +290,15 @@ module io_registers (
     // -------------------------------------------------------------------------
     reg [15:0] regs [0:511];        // 512 halfwords = 1 KB
     reg [15:0] if_r;                // IF — special W1C semantics
+    reg        postflg_r;
+    reg [31:0] internal_mem_control;
 
     integer i;
     initial begin
         for (i = 0; i < 512; i = i + 1) regs[i] = 16'h0;
         if_r = 16'h0;
+        postflg_r = 1'b0;
+        internal_mem_control = 32'h0d000020;
     end
 
     // -------------------------------------------------------------------------
@@ -314,7 +339,10 @@ module io_registers (
         endcase
     end
 
-    wire write_en = we & ~misalign_comb;
+    wire standard_io = addr[11:10] == 2'b00;
+    wire write_en = we & ~misalign_comb & standard_io;
+    wire writes_internal_control = we & ~misalign_comb &&
+                                   (addr[11:2] == 10'h200);
 
     // -------------------------------------------------------------------------
     //  Per-halfword write/clear masks ("which bytes are being written this
@@ -365,6 +393,8 @@ module io_registers (
         input [8:0] idx;
         begin
             is_special_hw = (idx == HW_IF)        ||
+                            ((idx >= HW_TM0D) && (idx <= HW_TM3CNT)) ||
+                            (idx == HW_PAUSE)     ||
                             (idx == HW_FIFO_A_L)  || (idx == HW_FIFO_A_H) ||
                             (idx == HW_FIFO_B_L)  || (idx == HW_FIFO_B_H);
         end
@@ -388,11 +418,53 @@ module io_registers (
                 (hw_idx_lo == HW_DISPSTAT)
                 ? wdata_shifted[7:0] & 8'h38
                 : wdata_shifted[7:0];
-            if (we_lo_b1) regs[hw_idx_lo][15:8] <= wdata_shifted[15:8];
+            if (we_lo_b1) regs[hw_idx_lo][15:8] <=
+                (hw_idx_lo == HW_WSCNT)
+                ? wdata_shifted[15:8] & 8'h5f
+                : wdata_shifted[15:8];
         end
         if (commit_hi) begin
             if (we_hi_b0) regs[hw_idx_hi][7:0]  <= wdata_shifted[23:16];
-            if (we_hi_b1) regs[hw_idx_hi][15:8] <= wdata_shifted[31:24];
+            if (we_hi_b1) regs[hw_idx_hi][15:8] <=
+                (hw_idx_hi == HW_WSCNT)
+                ? wdata_shifted[31:24] & 8'h5f
+                : wdata_shifted[31:24];
+        end
+
+        // DMA completion is internal processing, not an external bus write.
+        // Hardware clear wins if completion coincides with a software write.
+        if (dma_disable_i[0]) regs[HW_DMA0CNT_H][15] <= 1'b0;
+        if (dma_disable_i[1]) regs[HW_DMA1CNT_H][15] <= 1'b0;
+        if (dma_disable_i[2]) regs[HW_DMA2CNT_H][15] <= 1'b0;
+        if (dma_disable_i[3]) regs[HW_DMA3CNT_H][15] <= 1'b0;
+    end
+
+    // POSTFLG/HALTCNT respond only while the last accepted CPU opcode came
+    // from BIOS. This also qualifies DMA activity initiated while BIOS owns
+    // the stalled CPU bus. HALTCNT is the upper byte of the 0x300 halfword.
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n)
+            postflg_r <= 1'b0;
+        else if ((hw_idx_lo == HW_PAUSE) && we_lo_b0 &&
+                 system_write_enable_i && wdata_shifted[0])
+            postflg_r <= 1'b1;
+    end
+
+    assign halt_request_o = (hw_idx_lo == HW_PAUSE) && we_lo_b1 &&
+                            system_write_enable_i;
+    assign postflg_o = postflg_r;
+
+    // Unlike the normal 1 KiB IO area, this word is mirrored every 64 KiB.
+    // Only the low twelve address bits reach this module, preserving that
+    // hardware mirror while preventing 0x800 from aliasing DISPCNT.
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            internal_mem_control <= 32'h0d000020;
+        end else if (writes_internal_control) begin
+            if (byteena[0]) internal_mem_control[7:0]   <= wdata_shifted[7:0];
+            if (byteena[1]) internal_mem_control[15:8]  <= wdata_shifted[15:8];
+            if (byteena[2]) internal_mem_control[23:16] <= wdata_shifted[23:16];
+            if (byteena[3]) internal_mem_control[31:24] <= wdata_shifted[31:24];
         end
     end
 
@@ -431,6 +503,8 @@ module io_registers (
     reg       misalign_q;
     reg       we_q;
     reg [8:0] hw_idx_lo_q, hw_idx_hi_q;
+    reg [11:0] addr_q;
+    reg [31:0] open_bus_q;
 
     always @(posedge clk) begin
         size_q        <= size;
@@ -441,6 +515,8 @@ module io_registers (
         if (rden) begin
             hw_idx_lo_q   <= hw_idx_lo;
             hw_idx_hi_q   <= hw_idx_hi;
+            addr_q         <= addr;
+            open_bus_q     <= open_bus_i;
         end
     end
 
@@ -452,28 +528,92 @@ module io_registers (
     function automatic [15:0] read_hword;
         input [8:0] idx;
         input [15:0] base;
+        input [15:0] vcount_value;
+        input [15:0] keypad_value;
+        input [15:0] if_value;
+        input vblank_value;
+        input hblank_value;
+        input vcount_match_value;
+        input [3:0] sound_status_value;
+        input [15:0] serial0_value;
+        input [15:0] serial1_value;
+        input [15:0] serial2_value;
+        input [15:0] serial3_value;
+        input [15:0] timer0_count_value;
+        input [15:0] timer0_control_value;
+        input [15:0] timer1_count_value;
+        input [15:0] timer1_control_value;
+        input [15:0] timer2_count_value;
+        input [15:0] timer2_control_value;
+        input [15:0] timer3_count_value;
+        input [15:0] timer3_control_value;
+        input postflg_value;
         begin
             case (idx)
-                HW_VCOUNT:    read_hword = vcount_i;
-                HW_KEY:       read_hword = keypad_i;
-                HW_IF:        read_hword = if_r;
+                HW_VCOUNT:    read_hword = vcount_value;
+                HW_KEY:       read_hword = keypad_value;
+                HW_IF:        read_hword = if_value;
                 HW_DISPSTAT:  read_hword = {base[15:3],
-                                            vcount_match_i,
-                                            hblank_status_i,
-                                            vblank_status_i};
-                HW_SOUNDCNT_X:read_hword = {base[15:4], sound_status_i};
-                HW_SCD0:      read_hword = serial_data0_i;
-                HW_SCD1:      read_hword = serial_data1_i;
-                HW_SCD2:      read_hword = serial_data2_i;
-                HW_SCD3:      read_hword = serial_data3_i;
+                                            vcount_match_value,
+                                            hblank_value,
+                                            vblank_value};
+                HW_SOUNDCNT_X:read_hword = {base[15:4],
+                                            sound_status_value};
+                HW_SCD0:      read_hword = serial0_value;
+                HW_SCD1:      read_hword = serial1_value;
+                HW_SCD2:      read_hword = serial2_value;
+                HW_SCD3:      read_hword = serial3_value;
+                HW_TM0D:      read_hword = timer0_count_value;
+                HW_TM0CNT:    read_hword = timer0_control_value;
+                HW_TM1D:      read_hword = timer1_count_value;
+                HW_TM1CNT:    read_hword = timer1_control_value;
+                HW_TM2D:      read_hword = timer2_count_value;
+                HW_TM2CNT:    read_hword = timer2_control_value;
+                HW_TM3D:      read_hword = timer3_count_value;
+                HW_TM3CNT:    read_hword = timer3_control_value;
+                HW_PAUSE:     read_hword = {15'd0, postflg_value};
                 default:      read_hword = base;
             endcase
         end
     endfunction
 
-    wire [15:0] rd_lo_q = read_hword(hw_idx_lo_q, regs[hw_idx_lo_q]);
-    wire [15:0] rd_hi_q = read_hword(hw_idx_hi_q, regs[hw_idx_hi_q]);
-    wire [31:0] rd_word = {rd_hi_q, rd_lo_q};
+    function automatic write_only_halfword;
+        input [8:0] idx;
+        begin
+            write_only_halfword =
+                ((idx >= HW_BG0HOFS) && (idx <= HW_BG3Y_H)) ||
+                ((idx >= HW_WIN0H) && (idx <= HW_WIN1V)) ||
+                ((idx >= HW_FIFO_A_L) && (idx <= HW_FIFO_B_H)) ||
+                ((idx >= HW_DMA0SAD_L) && (idx <= HW_DMA0CNT_L)) ||
+                ((idx >= HW_DMA1SAD_L) && (idx <= HW_DMA1CNT_L)) ||
+                ((idx >= HW_DMA2SAD_L) && (idx <= HW_DMA2CNT_L)) ||
+                ((idx >= HW_DMA3SAD_L) && (idx <= HW_DMA3CNT_L));
+        end
+    endfunction
+
+    wire [15:0] rd_lo_base = read_hword(
+        hw_idx_lo_q, regs[hw_idx_lo_q], vcount_i, keypad_i, if_r,
+        vblank_status_i, hblank_status_i, vcount_match_i, sound_status_i,
+        serial_data0_i, serial_data1_i, serial_data2_i, serial_data3_i,
+        tm0_count_i, tm0_control_i, tm1_count_i, tm1_control_i,
+        tm2_count_i, tm2_control_i, tm3_count_i, tm3_control_i, postflg_r
+    );
+    wire [15:0] rd_hi_base = read_hword(
+        hw_idx_hi_q, regs[hw_idx_hi_q], vcount_i, keypad_i, if_r,
+        vblank_status_i, hblank_status_i, vcount_match_i, sound_status_i,
+        serial_data0_i, serial_data1_i, serial_data2_i, serial_data3_i,
+        tm0_count_i, tm0_control_i, tm1_count_i, tm1_control_i,
+        tm2_count_i, tm2_control_i, tm3_count_i, tm3_control_i, postflg_r
+    );
+    wire [15:0] rd_lo_q = write_only_halfword(hw_idx_lo_q)
+                          ? open_bus_q[15:0] : rd_lo_base;
+    wire [15:0] rd_hi_q = write_only_halfword(hw_idx_hi_q)
+                          ? open_bus_q[31:16] : rd_hi_base;
+    wire [31:0] normal_rd_word = {rd_hi_q, rd_lo_q};
+    wire [31:0] rd_word = (addr_q[11:2] == 10'h200)
+                          ? internal_mem_control
+                          : (addr_q[11:10] == 2'b00)
+                          ? normal_rd_word : open_bus_q;
 
     // ARM-style size + sign extension on the registered data
     reg  [7:0]  byte_sel;
@@ -565,14 +705,14 @@ module io_registers (
     assign dma3cnt_l_o  = regs[HW_DMA3CNT_L];
     assign dma3cnt_h_o  = regs[HW_DMA3CNT_H];
 
-    assign tm0d_o       = regs[HW_TM0D];
-    assign tm0cnt_o     = regs[HW_TM0CNT];
-    assign tm1d_o       = regs[HW_TM1D];
-    assign tm1cnt_o     = regs[HW_TM1CNT];
-    assign tm2d_o       = regs[HW_TM2D];
-    assign tm2cnt_o     = regs[HW_TM2CNT];
-    assign tm3d_o       = regs[HW_TM3D];
-    assign tm3cnt_o     = regs[HW_TM3CNT];
+    assign tm0d_o       = tm0_count_i;
+    assign tm0cnt_o     = tm0_control_i;
+    assign tm1d_o       = tm1_count_i;
+    assign tm1cnt_o     = tm1_control_i;
+    assign tm2d_o       = tm2_count_i;
+    assign tm2cnt_o     = tm2_control_i;
+    assign tm3d_o       = tm3_count_i;
+    assign tm3cnt_o     = tm3_control_i;
 
     assign sccnt_l_o    = regs[HW_SCCNT_L];
     assign sccnt_h_o    = regs[HW_SCCNT_H];

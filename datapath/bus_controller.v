@@ -6,11 +6,17 @@
 //  IWRAM, IO RAM, palette RAM, VRAM, OAM, PAK ROM, and cart RAM. During writes,
 //  `data_o` forwards the active master's `data_main`; during reads, it returns
 //  the selected region's data bus.
+//
+//  `request` qualifies every region strobe so DMA-pending and CPU-internal
+//  phases cannot repeat a held transaction. Only 0x00000000-0x00003FFF selects
+//  BIOS. Unmapped regions, the rest of sections 0/1, and write-only IO reads
+//  fall back to the retained CPU opcode supplied on `data_open_bus`.
 // =============================================================================
 
 module bus_controller(
 	input  wire [31:0]	rd_addr,
 	input  wire 		nRW,
+	input  wire        request,
 
 	input  wire [31:0]	data_bios,
 	input  wire [31:0]	data_ewram,
@@ -22,6 +28,7 @@ module bus_controller(
 	input  wire [31:0]	data_pakrom,
 	input  wire [31:0]	data_cartram,
 	input  wire [31:0]	data_main,
+	input  wire [31:0]	data_open_bus,
 
 	output reg  [31:0]	data_o = 32'b0,
 
@@ -46,6 +53,7 @@ module bus_controller(
 );
 
 wire [3:0] mem_section = rd_addr[27:24];
+wire       bios_address = rd_addr[27:14] == 14'd0;
 
 always @(*) begin
 	we_ewram	= 0;
@@ -56,7 +64,7 @@ always @(*) begin
 	we_oam	 	= 0;
 	we_pakrom	= 0;
 	we_cartram	= 0;
-	if (nRW) begin
+	if (request && nRW) begin
 		case (mem_section) 
 			4'h2: we_ewram	 = 1;	//EWRAM
 			4'h3: we_iwram	 = 1;	//IWRAM
@@ -87,10 +95,9 @@ always @(*) begin
 	rden_oam	= 0;
 	rden_pakrom	= 0;
 	rden_cartram= 0;
-	if (~nRW) begin
+	if (request && ~nRW) begin
 		case (mem_section) 
-			4'h0: rden_bios 	= 1;	//BIOS
-			4'h1: rden_bios 	= 1;	//BIOS
+			4'h0: rden_bios 	= bios_address;	//BIOS (16 KiB only)
 			4'h2: rden_ewram 	= 1;	//EWRAM
 			4'h3: rden_iwram 	= 1;	//IWRAM
 			4'h4: rden_ioram 	= 1;	//IORAM
@@ -109,13 +116,14 @@ always @(*) begin
 	end
 end
 
-always @(*) begin
-	if (nRW) begin
-		data_o = data_main;
-	end else begin
-		case (mem_section) 
-			4'h0: data_o = data_bios;	//BIOS
-			4'h1: data_o = data_bios;	//BIOS
+	always @(*) begin
+		if (nRW) begin
+			data_o = data_main;
+		end else begin
+			data_o = data_open_bus;
+			case (mem_section)
+				4'h0: data_o = bios_address ? data_bios : data_open_bus;
+				4'h1: data_o = data_open_bus;
 			4'h2: data_o = data_ewram;	//EWRAM
 			4'h3: data_o = data_iwram;	//IWRAM
 			4'h4: data_o = data_ioram;	//IO_RAM
@@ -130,8 +138,9 @@ always @(*) begin
 			4'hD: data_o = data_pakrom;	//PAK_ROM
 			4'hE: data_o = data_cartram;//CART_RAM
 			4'hF: data_o = data_cartram;//CART_RAM
-		endcase
+				default: data_o = data_open_bus;
+			endcase
+		end
 	end
-end
 
 endmodule

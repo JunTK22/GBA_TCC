@@ -345,7 +345,7 @@ phase_w32:
 @ Uses readable registers and architecturally writable bit patterns. DISPSTAT
 @ status bits are dynamic and are masked before comparing; reserved bits 6-7
 @ must read zero. VCOUNT must remain in its documented 0..227 range. KEY is a
-@ fixture-specific check because the current top ties all keys released.
+@ fixture-specific check because the testbench leaves all buttons released.
 @ ==============================================================================
 phase_io:
     MOV     R7, #4
@@ -378,7 +378,7 @@ phase_io:
     CHECK_LS 0x04, R5
 
     ADD     R5, R4, #0x100
-    LDRH    R2, [R5, #0x30]      @ KEY input tied to all released.
+    LDRH    R2, [R5, #0x30]      @ Testbench leaves mapped KEY inputs released.
     LOADH   R1, 0x03FF
     CHECK_EQ 0x05, R5
 

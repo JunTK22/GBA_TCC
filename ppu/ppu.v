@@ -16,9 +16,11 @@
 //      OAM         - 32-bit word indices
 //      palette     - 16-bit halfword indices
 //
-//  All memory return paths assume one synchronous read cycle. External wrappers
-//  own force-blank gating and CPU/DMA/PPU arbitration. The 15-bit pixel stream
-//  is renderer output, not a complete VGA timing or color-conversion interface.
+//  All memory return paths assume one synchronous read cycle. BG/palette
+//  requests apply the PPU's cycle-40 DISPCNT latch before external wrappers
+//  arbitrate CPU/DMA/PPU traffic; OBJ memory traffic uses the current enable
+//  bit and is unaffected by force blank. The 15-bit pixel stream is renderer
+//  output, not a complete VGA timing or color-conversion interface.
 // =============================================================================
 module ppu (
     input              clock,
@@ -128,6 +130,38 @@ module ppu (
         end
     end
 
+    // BG visibility/access enable takes effect only after DISPCNT has crossed
+    // the three cycle-40 scanline latches. Force blank takes effect immediately
+    // when set and remains active until the cleared value crosses those latches.
+    // OBJ memory fetches deliberately continue to use the live enable below.
+    wire [5:0] dispcnt_current = {
+        display_force_blank, display_enable_obj, display_enable_bg
+    };
+    reg [5:0] dispcnt_latch_0;
+    reg [5:0] dispcnt_latch_1;
+    reg [5:0] dispcnt_latch_2;
+
+    always @(posedge clock) begin
+        if (reset) begin
+            dispcnt_latch_0 <= 6'd0;
+            dispcnt_latch_1 <= 6'd0;
+            dispcnt_latch_2 <= 6'd0;
+        end else if (enable && (tick == 11'd39)) begin
+            dispcnt_latch_0 <= dispcnt_latch_1;
+            dispcnt_latch_1 <= dispcnt_latch_2;
+            dispcnt_latch_2 <= dispcnt_current;
+        end
+    end
+
+    wire [3:0] effective_enable_bg =
+        display_enable_bg & dispcnt_latch_0[3:0];
+    wire effective_enable_obj =
+        display_enable_obj & dispcnt_latch_0[4];
+    wire effective_force_blank =
+        display_force_blank | dispcnt_latch_0[5];
+    wire [3:0] display_access_bg =
+        effective_enable_bg & {4{!effective_force_blank}};
+
     // Ppu deliberately asserts the video hblank output one clock after
     // its internal DISPSTAT hblank boundary.  Its video vblank output remains
     // asserted on scanline 227 as well.
@@ -158,6 +192,8 @@ module ppu (
         .display_mode(display_mode),
         .display_frame(display_frame),
         .display_enable_bg(display_enable_bg),
+        .display_effective_enable_bg(effective_enable_bg),
+        .display_access_bg(display_access_bg),
         .bg_size(bg_size),
         .bg_affine_wrap(bg_affine_wrap),
         .bg_screen_base(bg_screen_base),
@@ -212,9 +248,9 @@ module ppu (
         .reset(reset),
         .enable(enable),
         .display_mode(display_mode),
-        .display_force_blank(display_force_blank),
-        .display_enable_obj(display_enable_obj),
-        .display_enable_bg(display_enable_bg),
+        .display_force_blank(effective_force_blank),
+        .display_enable_obj(effective_enable_obj),
+        .display_enable_bg(effective_enable_bg),
         .display_window(display_window),
         .display_obj_window(display_obj_window),
         .bg_priority(bg_priority),

@@ -3,9 +3,10 @@
 //  96 KiB dual-port Video RAM behind the 128 KiB GBA VRAM aperture.
 //
 //  One 64 KiB BG bank and two 16 KiB OBJ banks implement the documented
-//  aperture mirroring. Each physical bank has a CPU/DMA read-write port and a
-//  PPU read-only port. BG/OBJ routing depends on the display mode; force blank
-//  suppresses PPU requests.
+//  aperture mirroring, including the inaccessible low mirror in bitmap modes.
+//  Each physical bank has a CPU/DMA read-write port and a PPU read-only port.
+//  BG/OBJ routing depends on the display mode. Force blank suppresses BG
+//  requests, while OBJ fetches continue as on GBA hardware.
 //
 //  CPU/DMA and PPU addresses at this boundary are byte addresses. CPU/DMA
 //  32-bit accesses use two 16-bit beats. Byte writes replicate across BG VRAM
@@ -52,6 +53,8 @@ module vram (
     wire cpu_bg_sel       = !addr[16];
     wire cpu_obj_low_sel  = addr[16] && !addr[14];
     wire cpu_obj_high_sel = addr[16] && addr[14];
+    wire cpu_bitmap_mirror_hole =
+        bitmap_mode && (addr[16:14] == 3'b110);
     wire cpu_request = rden || we;
 
     wire cpu_byte_write = we && (size == SIZE_BYTE);
@@ -63,7 +66,7 @@ module vram (
     wire [1:0]  cpu_mem_size    = cpu_bg_byte_write ? SIZE_HALF : size;
 
     wire bg_request  = bg_rden && !force_blank;
-    wire obj_request = obj_rden && !force_blank;
+    wire obj_request = obj_rden;
 
     wire ppu_bg_read = bg_request && !bg_addr[16];
     wire ppu_obj_low_bg_read    = bg_request && bitmap_mode && bg_addr[16] && !bg_addr[14];
@@ -129,8 +132,10 @@ module vram (
         .addr           (cpu_mem_addr[13:0]),
         .wdata          (cpu_mem_wdata),
         .rdata          (obj_low_mem_rdata),
-        .we             (obj_low_cpu_access && we && cpu_write_allowed),
-        .rden           (obj_low_cpu_access && rden),
+        .we             (obj_low_cpu_access && we && cpu_write_allowed
+                         && !cpu_bitmap_mirror_hole),
+        .rden           (obj_low_cpu_access
+                         && (rden || (we && cpu_bitmap_mirror_hole))),
         .size           (cpu_mem_size),
         .sign_extend    (sign_extend),
         .ready          (obj_low_ready),
@@ -188,7 +193,9 @@ module vram (
         end
 
         if (cpu_access_issued) begin
-            if (cpu_bg_sel)
+            if (cpu_bitmap_mirror_hole)
+                cpu_response_bank <= BANK_ZERO;
+            else if (cpu_bg_sel)
                 cpu_response_bank <= BANK_BG;
             else if (cpu_obj_high_sel)
                 cpu_response_bank <= BANK_OBJ_HIGH;
@@ -207,7 +214,8 @@ module vram (
 
     assign rdata = cpu_response_bank == BANK_BG       ? bg_mem_rdata
                  : cpu_response_bank == BANK_OBJ_HIGH ? obj_high_mem_rdata
-                 : obj_low_mem_rdata;
+                 : cpu_response_bank == BANK_OBJ_LOW  ? obj_low_mem_rdata
+                 : 32'h00000000;
 
     wire selected_ready = cpu_bg_sel       ? bg_ready
                         : cpu_obj_high_sel ? obj_high_ready
