@@ -13,11 +13,12 @@
 //  `display_enable_bg` keeps each live fetch pipeline cycle-aligned, while
 //  `display_effective_enable_bg` qualifies end-of-line affine advancement with
 //  both the current and cycle-40-latched enables. It excludes force blank.
-//  `display_access_bg` separately qualifies physical VRAM requests after the
-//  parent applies the delayed DISPCNT enable/force-blank rules. Affine-reference
-//  write pulses reload the internal BG2/BG3 coordinates; vertical mosaic and
-//  scanline/frame progression update those coordinates. Text tile-data reads
-//  already armed at the visible cutoff are allowed to finish in HBlank.
+//  `display_access_bg` qualifies renderer prefetches, while
+//  `display_contention_bg` reports whether the same request occupies the
+//  CPU/DMA-visible VRAM slot. Affine-reference write pulses mark the internal
+//  BG2/BG3 coordinates for reload at the next scanline latch; vertical mosaic
+//  and scanline/frame progression update those coordinates. Text tile-data
+//  reads already armed at the visible cutoff are allowed to finish in HBlank.
 // =============================================================================
 module bg_renderer (
     input                            clock,
@@ -29,6 +30,7 @@ module bg_renderer (
     input      [3:0]                 display_enable_bg,
     input      [3:0]                 display_effective_enable_bg,
     input      [3:0]                 display_access_bg,
+    input      [3:0]                 display_contention_bg,
 
     input      [7:0]                 bg_size,
     input      [3:0]                 bg_affine_wrap,
@@ -51,6 +53,7 @@ module bg_renderer (
     input      [3:0]                 mosaic_y,
 
     output reg                       vram_read,
+    output reg                       vram_contention,
     output reg [15:0]                vram_address,
     input      [15:0]                vram_read_data,
 
@@ -86,6 +89,10 @@ module bg_renderer (
     reg signed [27:0]              aff_y_line         [0:1];
     reg signed [27:0]              aff_x_mosaic       [0:1];
     reg signed [27:0]              aff_y_mosaic       [0:1];
+    reg [1:0]                      aff_x_write_pending;
+    reg [1:0]                      aff_y_write_pending;
+    reg [1:0]                      aff_x_reload_latched;
+    reg [1:0]                      aff_y_reload_latched;
     reg [7:0]                      aff_pixel_color    [0:1];
     wire signed [27:0]             aff_line_next_x    [0:1];
     wire signed [27:0]             aff_line_next_y    [0:1];
@@ -375,6 +382,7 @@ module bg_renderer (
         integer i;
         integer a;
         vram_read = 1'b0;
+        vram_contention = 1'b0;
         vram_address = 16'b0;
         enqueue_valid = 4'b0000;
         enqueue_opaque = 4'b0000;
@@ -388,6 +396,7 @@ module bg_renderer (
                 if (display_access_bg[i] && (tile_stage[i] == 3'd0)
                     && (tick <= 11'd1005)) begin
                     vram_read = 1'b1;
+                    vram_contention = display_contention_bg[i];
                     vram_address = regular_map_address(
                         bg_screen_base_i[i], bg_size_i[i], regular_x[i], regular_y[i]
                     );
@@ -398,6 +407,8 @@ module bg_renderer (
                         layer_flip_y[i], regular_y[i], tile_stage[i]
                     );
                     vram_read = vram_address < 16'h8000;
+                    vram_contention = vram_read
+                        && display_contention_bg[i];
                 end
                 if (display_access_bg[i] && regular_fetch_8bpp[i]) begin
                     vram_address = regular_8bpp_address(
@@ -405,6 +416,8 @@ module bg_renderer (
                         layer_flip_y[i], regular_y[i], tile_stage[i]
                     );
                     vram_read = vram_address < 16'h8000;
+                    vram_contention = vram_read
+                        && display_contention_bg[i];
                 end
 
                 if ((tick >= 11'd39) && (tick <= 11'd1005)) begin
@@ -420,6 +433,7 @@ module bg_renderer (
                 if (display_access_bg[a + 2]
                     && (state[a + 2] == PHASE_REQUEST)) begin
                     vram_read = 1'b1;
+                    vram_contention = display_contention_bg[a + 2];
                     vram_address = affine_map_address(
                         bg_screen_base_i[a + 2], bg_size_i[a + 2], aff_x[a], aff_y[a]
                     );
@@ -427,6 +441,7 @@ module bg_renderer (
                 if (display_access_bg[a + 2]
                     && (state[a + 2] == PHASE_USE)) begin
                     vram_read = 1'b1;
+                    vram_contention = display_contention_bg[a + 2];
                     vram_address = affine_tile_address(
                         bg_char_base_i[a + 2],
                         aff_x[a][11] ? vram_read_data[15:8] : vram_read_data[7:0],
@@ -450,6 +465,7 @@ module bg_renderer (
         if (bitmap_selected && enable && layer_active[2]) begin
             if (display_access_bg[2] && (state[2] == PHASE_REQUEST)) begin
                 vram_read = 1'b1;
+                vram_contention = display_contention_bg[2];
                 case (display_mode)
                     3'd3: vram_address = bitmap_linear_240[15:0];
                     3'd4: vram_address = (bitmap_linear_240 >> 1)
@@ -517,6 +533,10 @@ module bg_renderer (
                 aff_y_mosaic[a] <= bg_aff_y_i[a];
                 aff_pixel_color[a] <= 8'd0;
             end
+            aff_x_write_pending <= 2'b00;
+            aff_y_write_pending <= 2'b00;
+            aff_x_reload_latched <= 2'b00;
+            aff_y_reload_latched <= 2'b00;
             mosaic_counter <= 4'd0;
         end else begin
             for (i = 0; i < 4; i = i + 1) begin
@@ -628,18 +648,43 @@ module bg_renderer (
                             && (((a == 0) && (display_mode >= 3'd1)
                                  && (display_mode <= 3'd5))
                                 || ((a == 1) && (display_mode == 3'd2)))) begin
-                            aff_x[a] <= aff_line_next_x[a];
-                            aff_y[a] <= aff_line_next_y[a];
-                            aff_x_line[a] <= aff_line_next_x[a];
-                            aff_y_line[a] <= aff_line_next_y[a];
+                            if (!aff_x_reload_latched[a]) begin
+                                aff_x[a] <= aff_line_next_x[a];
+                                aff_x_line[a] <= aff_line_next_x[a];
+                            end
+                            if (!aff_y_reload_latched[a]) begin
+                                aff_y[a] <= aff_line_next_y[a];
+                                aff_y_line[a] <= aff_line_next_y[a];
+                            end
                             if (mosaic_counter == mosaic_y) begin
-                                aff_x_mosaic[a] <= aff_line_next_x[a];
-                                aff_y_mosaic[a] <= aff_line_next_y[a];
+                                if (!aff_x_reload_latched[a]) begin
+                                    aff_x_mosaic[a] <= aff_line_next_x[a];
+                                end
+                                if (!aff_y_reload_latched[a]) begin
+                                    aff_y_mosaic[a] <= aff_line_next_y[a];
+                                end
                             end else if (bg_mosaic_i[a + 2]) begin
-                                aff_x[a] <= aff_x_mosaic[a];
-                                aff_y[a] <= aff_y_mosaic[a];
+                                if (!aff_x_reload_latched[a]) begin
+                                    aff_x[a] <= aff_x_mosaic[a];
+                                end
+                                if (!aff_y_reload_latched[a]) begin
+                                    aff_y[a] <= aff_y_mosaic[a];
+                                end
                             end
                         end
+
+                        // BGX/BGY writes sampled at the scanline latch replace
+                        // line advancement for the line that is about to start.
+                        if (aff_x_reload_latched[a]) begin
+                            aff_x[a] <= aff_x_line[a];
+                            aff_x_mosaic[a] <= aff_x_line[a];
+                        end
+                        if (aff_y_reload_latched[a]) begin
+                            aff_y[a] <= aff_y_line[a];
+                            aff_y_mosaic[a] <= aff_y_line[a];
+                        end
+                        aff_x_reload_latched[a] <= 1'b0;
+                        aff_y_reload_latched[a] <= 1'b0;
                     end
 
                     mosaic_counter <= mosaic_counter + 4'd1;
@@ -665,12 +710,26 @@ module bg_renderer (
                 if (is_vdraw) begin
                     for (a = 0; a < 2; a = a + 1) begin
                         if (write_aff_x[a]) begin
-                            aff_x[a] <= bg_aff_x_i[a];
-                            aff_x_line[a] <= bg_aff_x_i[a];
+                            aff_x_write_pending[a] <= 1'b1;
                         end
                         if (write_aff_y[a]) begin
-                            aff_y[a] <= bg_aff_y_i[a];
-                            aff_y_line[a] <= bg_aff_y_i[a];
+                            aff_y_write_pending[a] <= 1'b1;
+                        end
+
+                        // VCOUNT changes at tick 1224 in the measured top-level
+                        // timing. Snapshot writes through that boundary; writes
+                        // after it remain pending for the following scanline.
+                        if (tick == 11'd1224) begin
+                            if (aff_x_write_pending[a] || write_aff_x[a]) begin
+                                aff_x_line[a] <= bg_aff_x_i[a];
+                                aff_x_reload_latched[a] <= 1'b1;
+                            end
+                            if (aff_y_write_pending[a] || write_aff_y[a]) begin
+                                aff_y_line[a] <= bg_aff_y_i[a];
+                                aff_y_reload_latched[a] <= 1'b1;
+                            end
+                            aff_x_write_pending[a] <= 1'b0;
+                            aff_y_write_pending[a] <= 1'b0;
                         end
                     end
                 end else begin
@@ -682,6 +741,10 @@ module bg_renderer (
                         aff_x_mosaic[a] <= bg_aff_x_i[a];
                         aff_y_mosaic[a] <= bg_aff_y_i[a];
                     end
+                    aff_x_write_pending <= 2'b00;
+                    aff_y_write_pending <= 2'b00;
+                    aff_x_reload_latched <= 2'b00;
+                    aff_y_reload_latched <= 2'b00;
                     mosaic_counter <= 4'd0;
                 end
             end

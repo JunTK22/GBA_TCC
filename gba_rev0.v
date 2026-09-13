@@ -273,6 +273,7 @@ wire dma_write_phase = dma_active[0] ? wr_en_dma0 :
 // PPU register values from io_registers. These are written on clock_n and are
 // stable for half a CPU cycle before the PPU samples them on clock.
 wire [15:0] ppu_dispcnt;
+wire        ppu_greenswap;
 wire [15:0] ppu_dispstat;
 wire [15:0] ppu_bg0cnt, ppu_bg1cnt, ppu_bg2cnt, ppu_bg3cnt;
 wire [15:0] ppu_bg0hofs, ppu_bg0vofs;
@@ -289,6 +290,7 @@ wire [31:0] ppu_mosaic;
 wire [15:0] ppu_bldmod, ppu_colev, ppu_coley;
 
 wire        ppu_bg_vram_read;
+wire        ppu_bg_vram_contention;
 wire [16:0] ppu_bg_vram_address;
 wire [15:0] ppu_bg_vram_read_data;
 wire        ppu_obj_vram_read;
@@ -786,6 +788,7 @@ vram vram (
     .bg_addr    (ppu_bg_vram_address),
     .bg_rdata   (ppu_bg_vram_read_data),
     .bg_rden    (ppu_bg_vram_read),
+    .bg_contention (ppu_bg_vram_contention),
     .obj_addr   (ppu_obj_vram_address),
     .obj_rdata  (ppu_obj_vram_read_data),
     .obj_rden   (ppu_obj_vram_read),
@@ -874,6 +877,7 @@ io_registers io_registers (
     .fifo_b_data_o	(),
     //---------------- Display ----------------
     .dispcnt_o	(ppu_dispcnt),
+    .greenswap_o (ppu_greenswap),
     .dispstat_o	(ppu_dispstat),
     //---------------- Backgrounds ----------------
     .bg0cnt_o (ppu_bg0cnt), .bg1cnt_o (ppu_bg1cnt),
@@ -949,6 +953,7 @@ ppu ppu (
     .display_mode           (ppu_dispcnt[2:0]),
     .display_frame          (ppu_dispcnt[4]),
     .display_force_blank    (ppu_dispcnt[7]),
+    .display_green_swap     (ppu_greenswap),
     .display_enable_obj     (ppu_dispcnt[12]),
     .display_enable_bg      (ppu_dispcnt[11:8]),
     .display_window         (ppu_dispcnt[14:13]),
@@ -1007,6 +1012,7 @@ ppu ppu (
     .blend_alpha_b          (ppu_colev[12:8]),
     .blend_fade             (ppu_coley[4:0]),
     .bg_vram_read           (ppu_bg_vram_read),
+    .bg_vram_contention      (ppu_bg_vram_contention),
     .bg_vram_address        (ppu_bg_vram_address),
     .bg_vram_read_data      (ppu_bg_vram_read_data),
     .obj_vram_read          (ppu_obj_vram_read),

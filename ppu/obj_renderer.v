@@ -3,9 +3,10 @@
 
 // The explicit OAM FSM scans attributes and affine parameters. The live OBJ
 // enable bit gates both it and the OBJ VRAM pipeline; force blank does not.
-// Fetches retain the even-tick request/odd-tick consume cadence. VRAM addresses
-// are 14-bit halfword indices within OBJ character VRAM; OAM addresses are
-// 32-bit word indices. buffer_data is packed as:
+// OAM and character requests occupy even ticks. OAM returns are held for the
+// odd-tick decoder step, and character returns are consumed on odd ticks. VRAM
+// addresses are 14-bit halfword indices within OBJ character VRAM; OAM
+// addresses are 32-bit word indices. buffer_data is packed as:
 //   {opaque, color[7:0], prio[1:0], window, blend, mosaic}.
 module obj_renderer (
     input              clock,
@@ -108,6 +109,7 @@ module obj_renderer (
     reg [2:0] state;
     reg [2:0] next_state;
     reg [4:0] oam_affine_index;
+    reg [31:0] oam_read_data_q;
 
     reg [8:0] oam_attrs_x;
     reg [6:0] oam_attrs_row;
@@ -272,9 +274,9 @@ module obj_renderer (
     endfunction
 
     assign even_tick = tick[0] == 1'b0;
-    assign attr0 = oam_read_data[15:0];
-    assign attr1 = oam_read_data[31:16];
-    assign attr2 = oam_read_data[15:0];
+    assign attr0 = oam_read_data_q[15:0];
+    assign attr1 = oam_read_data_q[31:16];
+    assign attr2 = oam_read_data_q[15:0];
 
     assign decoded_width = object_width_tiles(attr0[15:14], attr1[15:14]);
     assign decoded_height = object_height_tiles(attr0[15:14], attr1[15:14]);
@@ -308,7 +310,7 @@ module obj_renderer (
     assign affine_start_x =
         ($signed(fetch_pb) * $signed(affine_offset_y))
         + ($signed(fetch_pa) * $signed(affine_offset_x));
-    assign affine_pd_return = $signed(oam_read_data[31:16]);
+    assign affine_pd_return = $signed(oam_read_data_q[31:16]);
     assign affine_start_y =
         ($signed(affine_pd_return) * $signed(affine_offset_y))
         + ($signed(fetch_pc) * $signed(affine_offset_x));
@@ -575,7 +577,14 @@ module obj_renderer (
             oam_index <= 7'd0;
             state <= OAM_ATTR01;
             oam_affine_index <= 5'd0;
+            oam_read_data_q <= 32'd0;
         end else if (enable) begin
+            // The shared OAM wrapper's CPU-side size formatter may change on
+            // the idle half-cycle. Hold the complete PPU word before that.
+            if (oam_read) begin
+                oam_read_data_q <= oam_read_data;
+            end
+
             // Complete the previous cycle's M10K read/modify/write.
             if (buffer_write_commit) begin
                 if (buffer_write_page) begin
@@ -677,9 +686,9 @@ module obj_renderer (
                             end
                         end
 
-                        OAM_PA: fetch_pa <= oam_read_data[31:16];
-                        OAM_PB: fetch_pb <= oam_read_data[31:16];
-                        OAM_PC: fetch_pc <= oam_read_data[31:16];
+                        OAM_PA: fetch_pa <= oam_read_data_q[31:16];
+                        OAM_PB: fetch_pb <= oam_read_data_q[31:16];
+                        OAM_PC: fetch_pc <= oam_read_data_q[31:16];
                         OAM_PD: begin
                             // PD is the synchronous return from the preceding
                             // even-tick request. Submit here so the next even

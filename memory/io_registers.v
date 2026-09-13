@@ -95,6 +95,7 @@ module io_registers (
 
     // ---------------- Display ----------------
     output wire [15:0] dispcnt_o,
+    output wire        greenswap_o,
     output wire [15:0] dispstat_o,
 
     // ---------------- Backgrounds ----------------
@@ -163,7 +164,7 @@ module io_registers (
     //  Halfword index constants (byte-address >> 1)
     // -------------------------------------------------------------------------
     localparam HW_DISPCNT      = 9'h000;
-    localparam HW_GREENSWAP    = 9'h001;   // undocumented; reserved.
+    localparam HW_GREENSWAP    = 9'h001;   // adjacent-pixel green swap, bit 0
     localparam HW_DISPSTAT     = 9'h002;
     localparam HW_VCOUNT       = 9'h003;
     localparam HW_BG0CNT       = 9'h004;
@@ -296,6 +297,10 @@ module io_registers (
     integer i;
     initial begin
         for (i = 0; i < 512; i = i + 1) regs[i] = 16'h0;
+        regs[HW_BG2PA] = 16'h0100;
+        regs[HW_BG2PD] = 16'h0100;
+        regs[HW_BG3PA] = 16'h0100;
+        regs[HW_BG3PD] = 16'h0100;
         if_r = 16'h0;
         postflg_r = 1'b0;
         internal_mem_control = 32'h0d000020;
@@ -643,6 +648,7 @@ module io_registers (
     //  Named outputs (combinational view of the storage)
     // -------------------------------------------------------------------------
     assign dispcnt_o   = regs[HW_DISPCNT];
+    assign greenswap_o = regs[HW_GREENSWAP][0];
     assign dispstat_o  = {regs[HW_DISPSTAT][15:3],
                           vcount_match_i, hblank_status_i, vblank_status_i};
 

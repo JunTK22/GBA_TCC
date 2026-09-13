@@ -16,11 +16,14 @@
 //      OAM         - 32-bit word indices
 //      palette     - 16-bit halfword indices
 //
-//  All memory return paths assume one synchronous read cycle. BG/palette
-//  requests apply the PPU's cycle-40 DISPCNT latch before external wrappers
-//  arbitrate CPU/DMA/PPU traffic; OBJ memory traffic uses the current enable
-//  bit and is unaffected by force blank. The 15-bit pixel stream is renderer
-//  output, not a complete VGA timing or color-conversion interface.
+//  All memory return paths assume one synchronous read cycle. Early BG
+//  prefetch uses the DISPCNT value entering the cycle-40 visible latch, while
+//  its CPU/DMA contention qualifier remains on the current visible latch. OBJ
+//  memory traffic uses the live enable bit and is unaffected by force blank.
+//  Green Swap buffers final-pixel pairs only on lines that begin enabled;
+//  their output valid stream starts four clocks later and flushes at tick 1010.
+//  The 15-bit pixel stream is renderer output, not a complete VGA timing or
+//  color-conversion interface.
 // =============================================================================
 module ppu (
     input              clock,
@@ -30,6 +33,7 @@ module ppu (
     input      [2:0]   display_mode,
     input              display_frame,
     input              display_force_blank,
+    input              display_green_swap,
     input              display_enable_obj,
     input      [3:0]   display_enable_bg,
     input      [1:0]   display_window,
@@ -85,6 +89,7 @@ module ppu (
     input      [4:0]   blend_fade,
 
     output             bg_vram_read,
+    output             bg_vram_contention,
     output     [16:0]  bg_vram_address,
     input      [15:0]  bg_vram_read_data,
 
@@ -159,8 +164,13 @@ module ppu (
         display_enable_obj & dispcnt_latch_0[4];
     wire effective_force_blank =
         display_force_blank | dispcnt_latch_0[5];
-    wire [3:0] display_access_bg =
+    wire [3:0] display_contention_bg =
         effective_enable_bg & {4{!effective_force_blank}};
+    wire [5:0] dispcnt_fetch_latch =
+        (tick < 11'd40) ? dispcnt_latch_1 : dispcnt_latch_0;
+    wire [3:0] display_access_bg = display_enable_bg
+        & dispcnt_fetch_latch[3:0]
+        & {4{!display_force_blank && !dispcnt_fetch_latch[5]}};
 
     // Ppu deliberately asserts the video hblank output one clock after
     // its internal DISPSTAT hblank boundary.  Its video vblank output remains
@@ -180,6 +190,81 @@ module ppu (
     wire        object_read;
     wire [13:0] object_data;
 
+    wire        compositor_valid;
+    wire [14:0] compositor_pixel;
+
+    // Green Swap exchanges only the green fields of each adjacent final-pixel
+    // pair. The compositor produces one pixel every four clocks, so lines that
+    // begin with Green Swap enabled retain the first pixel until its partner is
+    // available. The existing renderer presents that pixel ten clocks after
+    // the hardware merge phase (which begins eight clocks before `tick == 0`).
+    // Delay only the register qualifier so mid-line DMA writes are applied to
+    // the pair that was actually at the merge stage, not a later pair. A line
+    // starting disabled retains the legacy zero-latency stream: enabling it
+    // mid-line would require a permanently delayed output or merge lookahead.
+    reg         green_swap_line;
+    reg         green_swap_expect_odd;
+    reg [14:0]  green_swap_even_pixel;
+    reg [14:0]  green_swap_right_pixel;
+    reg         green_swap_right_ready;
+    reg [9:0]   green_swap_history;
+
+    wire green_swap_left_valid = compositor_valid
+        && green_swap_line && green_swap_expect_odd;
+    wire green_swap_right_output_valid = compositor_valid
+        && green_swap_line && !green_swap_expect_odd
+        && green_swap_right_ready;
+    wire green_swap_flush_valid = enable && green_swap_line
+        && green_swap_right_ready && (scanline < 8'd160)
+        && (tick == 11'd1010);
+
+    assign output_valid = green_swap_line
+        ? (green_swap_left_valid || green_swap_right_output_valid
+           || green_swap_flush_valid)
+        : compositor_valid;
+    assign output_pixel = !green_swap_line ? compositor_pixel
+        : green_swap_left_valid
+            ? (green_swap_history[9]
+                ? {green_swap_even_pixel[14:10], compositor_pixel[9:5],
+                   green_swap_even_pixel[4:0]}
+                : green_swap_even_pixel)
+            : green_swap_right_pixel;
+
+    always @(posedge clock) begin
+        if (reset) begin
+            green_swap_line <= 1'b0;
+            green_swap_expect_odd <= 1'b0;
+            green_swap_even_pixel <= 15'd0;
+            green_swap_right_pixel <= 15'd0;
+            green_swap_right_ready <= 1'b0;
+            green_swap_history <= 10'd0;
+        end else if (enable) begin
+            green_swap_history <= {green_swap_history[8:0],
+                                   display_green_swap};
+            if (tick == 11'd0) begin
+                green_swap_line <= 1'b0;
+                green_swap_expect_odd <= 1'b0;
+                green_swap_right_ready <= 1'b0;
+            end
+            if (tick == 11'd40) begin
+                green_swap_line <= display_green_swap;
+            end
+            if (compositor_valid && green_swap_line) begin
+                if (!green_swap_expect_odd) begin
+                    green_swap_even_pixel <= compositor_pixel;
+                    green_swap_expect_odd <= 1'b1;
+                end else begin
+                    green_swap_right_pixel <= green_swap_history[9]
+                        ? {compositor_pixel[14:10],
+                           green_swap_even_pixel[9:5], compositor_pixel[4:0]}
+                        : compositor_pixel;
+                    green_swap_right_ready <= 1'b1;
+                    green_swap_expect_odd <= 1'b0;
+                end
+            end
+        end
+    end
+
     // Renderer addresses are halfword indices; the external VRAM interface is
     // byte addressed.  Conversion belongs here, immediately upstream of VRAM.
     assign bg_vram_address = {bg_vram_halfword_address, 1'b0};
@@ -194,6 +279,7 @@ module ppu (
         .display_enable_bg(display_enable_bg),
         .display_effective_enable_bg(effective_enable_bg),
         .display_access_bg(display_access_bg),
+        .display_contention_bg(display_contention_bg),
         .bg_size(bg_size),
         .bg_affine_wrap(bg_affine_wrap),
         .bg_screen_base(bg_screen_base),
@@ -212,6 +298,7 @@ module ppu (
         .write_aff_y(write_aff_y),
         .mosaic_y(mosaic_bg_y),
         .vram_read(bg_vram_read),
+        .vram_contention(bg_vram_contention),
         .vram_address(bg_vram_halfword_address),
         .vram_read_data(bg_vram_read_data),
         .tick(tick),
@@ -284,8 +371,8 @@ module ppu (
         .palette_read(palette_read),
         .palette_address(palette_address),
         .palette_read_data(palette_read_data),
-        .valid(output_valid),
-        .pixel(output_pixel),
+        .valid(compositor_valid),
+        .pixel(compositor_pixel),
         .bg_valid(bg_pixels_valid),
         .bg_ready(bg_pixels_ready),
         .bg_opaque(bg_pixels_opaque),

@@ -283,6 +283,7 @@ module compositor (
     always @* begin : object_mosaic_selection
         object_mosaic_update = !object_data[0]
             || !sort_obj_mosaic[0]
+            || (object_data[4:3] < sort_obj_mosaic[4:3])
             || (mosaic_obj_counter == 4'd0);
         selected_object = object_mosaic_update
             ? object_data : sort_obj_mosaic;

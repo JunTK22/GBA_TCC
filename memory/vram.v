@@ -10,8 +10,10 @@
 //
 //  CPU/DMA and PPU addresses at this boundary are byte addresses. CPU/DMA
 //  32-bit accesses use two 16-bit beats. Byte writes replicate across BG VRAM
-//  halfwords and are ignored in OBJ VRAM. The first same-bank CPU/PPU collision
-//  adds one wait cycle without stopping the PPU port or losing a pending beat.
+//  halfwords and are ignored in OBJ VRAM. `bg_contention` distinguishes an
+//  early renderer prefetch from a CPU/DMA-visible BG slot. The first same-bank
+//  CPU/PPU collision adds one wait cycle without stopping the PPU port or
+//  losing a pending beat.
 // =============================================================================
 
 `timescale 1ns / 1ps
@@ -31,6 +33,7 @@ module vram (
     input  wire [16:0] bg_addr,
     output wire [15:0] bg_rdata,
     input  wire        bg_rden,
+    input  wire        bg_contention,
 
     input  wire [14:0] obj_addr,
     output wire [15:0] obj_rdata,
@@ -78,8 +81,12 @@ module vram (
     wire cpu_obj_low_request = cpu_request && cpu_obj_low_sel;
     wire cpu_obj_high_request = cpu_request && cpu_obj_high_sel;
 
-    wire cpu_bg_collision = cpu_bg_request && ppu_bg_read;
-    wire cpu_obj_low_collision  = cpu_obj_low_request && ppu_obj_low_read;
+    wire cpu_bg_collision =
+        cpu_bg_request && ppu_bg_read && bg_contention;
+    wire ppu_obj_low_contention =
+        (ppu_obj_low_bg_read && bg_contention) || ppu_obj_low_obj_read;
+    wire cpu_obj_low_collision  =
+        cpu_obj_low_request && ppu_obj_low_contention;
     wire cpu_obj_high_collision = cpu_obj_high_request && ppu_obj_high_read;
     wire cpu_collision          = cpu_bg_collision || cpu_obj_low_collision || cpu_obj_high_collision;
 

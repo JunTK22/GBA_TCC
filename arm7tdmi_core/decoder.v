@@ -1473,6 +1473,7 @@ always @(posedge CLK) begin
 					end
 				end else begin
 					Reg_bank_en <= 0;
+					PSR_wr_en <= 0;
 					Addr_reg_sel <= Incrementer_bus;
 				end
 			end
