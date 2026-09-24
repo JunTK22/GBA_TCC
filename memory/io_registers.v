@@ -398,6 +398,8 @@ module io_registers (
         input [8:0] idx;
         begin
             is_special_hw = (idx == HW_IF)        ||
+                            (idx == HW_IE)        ||
+                            (idx == HW_IME)       ||
                             ((idx >= HW_TM0D) && (idx <= HW_TM3CNT)) ||
                             (idx == HW_PAUSE)     ||
                             (idx == HW_FIFO_A_L)  || (idx == HW_FIFO_A_H) ||
@@ -407,6 +409,25 @@ module io_registers (
 
     wire commit_lo = write_en && |byteena[1:0] && !is_special_hw(hw_idx_lo);
     wire commit_hi = write_en && |byteena[3:2] && !is_special_hw(hw_idx_hi);
+
+    // IE/IME writes commit one inverse-clock edge after acceptance, like timer
+    // controls. An IRQ raised on the bus-write edge still sees the old enables.
+    reg [1:0] ie_byteena_q = 2'b00;
+    reg [1:0] ime_byteena_q = 2'b00;
+    reg [15:0] irq_control_value_q = 16'd0;
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            ie_byteena_q <= 2'b00;
+            ime_byteena_q <= 2'b00;
+            irq_control_value_q <= 16'd0;
+        end else begin
+            ie_byteena_q <= (hw_idx_lo == HW_IE)
+                          ? {we_lo_b1, we_lo_b0} : 2'b00;
+            ime_byteena_q <= (hw_idx_lo == HW_IME)
+                           ? {we_lo_b1, we_lo_b0} : 2'b00;
+            irq_control_value_q <= wdata_shifted[15:0];
+        end
+    end
 
     wire writes_bg2x = (commit_lo && (hw_idx_lo == HW_BG2X_L))
                     || (commit_hi && (hw_idx_hi == HW_BG2X_H));
@@ -435,6 +456,11 @@ module io_registers (
                 ? wdata_shifted[31:24] & 8'h5f
                 : wdata_shifted[31:24];
         end
+
+        if (ie_byteena_q[0]) regs[HW_IE][7:0] <= irq_control_value_q[7:0];
+        if (ie_byteena_q[1]) regs[HW_IE][15:8] <= irq_control_value_q[15:8];
+        if (ime_byteena_q[0]) regs[HW_IME][7:0] <= irq_control_value_q[7:0];
+        if (ime_byteena_q[1]) regs[HW_IME][15:8] <= irq_control_value_q[15:8];
 
         // DMA completion is internal processing, not an external bus write.
         // Hardware clear wins if completion coincides with a software write.

@@ -32,7 +32,7 @@ module gba_timers (
     output wire [15:0] tm2_control_o,
     output wire [15:0] tm3_count_o,
     output wire [15:0] tm3_control_o,
-    output wire [3:0]  irq_o
+    output reg  [3:0]  irq_o
 );
 
     reg [15:0] reload_value [0:3];
@@ -40,6 +40,7 @@ module gba_timers (
     reg [7:0]  control_value [0:3];
     reg [9:0]  prescale_count [0:3];
     reg [3:0]  start_load_wait;
+    reg [3:0]  start_overflow;
     reg        timer_write_q;
     reg [1:0]  timer_index_q;
     reg [3:0]  byteena_q;
@@ -127,8 +128,9 @@ module gba_timers (
                         !start_load_wait[0] &&
                         (prescale_count[0] ==
                          prescale_terminal(tick_control[0][1:0]));
-        timer_overflow[0] = timer_tick[0] &&
-                            (counter_value[0] == 16'hffff);
+        timer_overflow[0] = (timer_tick[0] &&
+                            (counter_value[0] == 16'hffff)) ||
+                           (start_load_wait[0] && start_overflow[0]);
 
         for (c = 1; c < 4; c = c + 1) begin
             if (tick_control[c][7] && !start_rise[c] &&
@@ -140,8 +142,9 @@ module gba_timers (
                                     prescale_terminal(
                                         tick_control[c][1:0]);
             end
-            timer_overflow[c] = timer_tick[c] &&
-                                (counter_value[c] == 16'hffff);
+            timer_overflow[c] = (timer_tick[c] &&
+                                (counter_value[c] == 16'hffff)) ||
+                               (start_load_wait[c] && start_overflow[c]);
         end
     end
 
@@ -149,6 +152,8 @@ module gba_timers (
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             start_load_wait <= 4'b0000;
+            start_overflow <= 4'b0000;
+            irq_o <= 4'b0000;
             timer_write_q <= 1'b0;
             timer_index_q <= 2'b00;
             byteena_q <= 4'b0000;
@@ -160,6 +165,11 @@ module gba_timers (
                 prescale_count[i] <= 10'd0;
             end
         end else begin
+            // IF samples a registered overflow request on the following edge.
+            irq_o <= timer_overflow & {tick_control[3][6],
+                                       tick_control[2][6],
+                                       tick_control[1][6],
+                                       tick_control[0][6]};
             // Timer register writes take effect one inverse-clock edge after
             // the bus accepts them. A combined reload/control word therefore
             // presents the new reload to the start transition on one edge.
@@ -175,6 +185,12 @@ module gba_timers (
                 control_value[i] <= control_effective[i];
 
                 if (start_rise[i]) begin
+                    // The old counter can overflow during the enable-to-load
+                    // window. Retain that carry before loading the new count.
+                    start_overflow[i] <= !control_effective[i][2] &&
+                        (prescale_count[i] ==
+                         prescale_terminal(control_effective[i][1:0])) &&
+                        (counter_value[i] == 16'hffff);
                     counter_value[i] <= reload_effective[i];
                     prescale_count[i] <= 10'd0;
                     // Enabling first loads the reload value; counting begins
@@ -215,9 +231,5 @@ module gba_timers (
     assign tm1_control_o = {8'd0, control_value[1]};
     assign tm2_control_o = {8'd0, control_value[2]};
     assign tm3_control_o = {8'd0, control_value[3]};
-    assign irq_o = timer_overflow & {tick_control[3][6],
-                                     tick_control[2][6],
-                                     tick_control[1][6],
-                                     tick_control[0][6]};
 
 endmodule

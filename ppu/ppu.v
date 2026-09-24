@@ -20,8 +20,8 @@
 //  prefetch uses the DISPCNT value entering the cycle-40 visible latch, while
 //  its CPU/DMA contention qualifier remains on the current visible latch. OBJ
 //  memory traffic uses the live enable bit and is unaffected by force blank.
-//  Green Swap buffers final-pixel pairs only on lines that begin enabled;
-//  their output valid stream starts four clocks later and flushes at tick 1010.
+//  Green Swap buffers final-pixel pairs when enabled, including mid-line;
+//  buffering adds four clocks from the affected pair and flushes at tick 1010.
 //  The 15-bit pixel stream is renderer output, not a complete VGA timing or
 //  color-conversion interface.
 // =============================================================================
@@ -198,16 +198,20 @@ module ppu (
     // begin with Green Swap enabled retain the first pixel until its partner is
     // available. The existing renderer presents that pixel ten clocks after
     // the hardware merge phase (which begins eight clocks before `tick == 0`).
-    // Delay only the register qualifier so mid-line DMA writes are applied to
-    // the pair that was actually at the merge stage, not a later pair. A line
-    // starting disabled retains the legacy zero-latency stream: enabling it
-    // mid-line would require a permanently delayed output or merge lookahead.
+    // Delay the register qualifier so mid-line writes apply to the pair at
+    // the hardware merge stage. Its value is already known at the even pixel,
+    // four clocks before the odd pixel; start buffering there if necessary.
+    // Keep buffering through the line tail once started, preserving all pixels.
     reg         green_swap_line;
     reg         green_swap_expect_odd;
     reg [14:0]  green_swap_even_pixel;
     reg [14:0]  green_swap_right_pixel;
     reg         green_swap_right_ready;
     reg [9:0]   green_swap_history;
+
+    wire green_swap_start_pair = compositor_valid && !green_swap_expect_odd
+        && green_swap_history[5];
+    wire green_swap_buffered = green_swap_line || green_swap_start_pair;
 
     wire green_swap_left_valid = compositor_valid
         && green_swap_line && green_swap_expect_odd;
@@ -218,11 +222,11 @@ module ppu (
         && green_swap_right_ready && (scanline < 8'd160)
         && (tick == 11'd1010);
 
-    assign output_valid = green_swap_line
+    assign output_valid = green_swap_buffered
         ? (green_swap_left_valid || green_swap_right_output_valid
            || green_swap_flush_valid)
         : compositor_valid;
-    assign output_pixel = !green_swap_line ? compositor_pixel
+    assign output_pixel = !green_swap_buffered ? compositor_pixel
         : green_swap_left_valid
             ? (green_swap_history[9]
                 ? {green_swap_even_pixel[14:10], compositor_pixel[9:5],
@@ -249,7 +253,10 @@ module ppu (
             if (tick == 11'd40) begin
                 green_swap_line <= display_green_swap;
             end
-            if (compositor_valid && green_swap_line) begin
+            if (green_swap_start_pair)
+                green_swap_line <= 1'b1;
+
+            if (compositor_valid) begin
                 if (!green_swap_expect_odd) begin
                     green_swap_even_pixel <= compositor_pixel;
                     green_swap_expect_odd <= 1'b1;
@@ -258,7 +265,7 @@ module ppu (
                         ? {compositor_pixel[14:10],
                            green_swap_even_pixel[9:5], compositor_pixel[4:0]}
                         : compositor_pixel;
-                    green_swap_right_ready <= 1'b1;
+                    green_swap_right_ready <= green_swap_line;
                     green_swap_expect_odd <= 1'b0;
                 end
             end
