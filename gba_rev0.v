@@ -101,9 +101,31 @@ module gba_rev0(
 // The default profile preserves the existing synthetic-BIOS and writable
 // SDRAM-backed PAK regression. Authentic cartridge builds override all three
 // parameters with the retail BIOS MIF, one converted .gba MIF, and enable=1.
-parameter BIOS_INIT_FILE = "code/assembly_code/memory_system_test.mif";
-parameter GAMEPAK_INIT_FILE = "UNUSED";
-parameter USE_ONCHIP_GAMEPAK = 1'b0;
+//
+// Converted hw-test Game Pak images live in code/hw-test/mif/ (gitignored).
+// Only one MIF is baked into the M10K per bitstream, so select a test by
+// pointing GAMEPAK_INIT_FILE at one of these localparams and recompiling.
+localparam MIF_128KB_BOUNDARY   = "code/hw-test/mif/128kb-boundary.mif";
+localparam MIF_BGPD             = "code/hw-test/mif/bgpd.mif";
+localparam MIF_BGX              = "code/hw-test/mif/bgx.mif";
+localparam MIF_BURST_INTO_TEARS = "code/hw-test/mif/burst-into-tears.mif";
+localparam MIF_DISPCNT_LATCH    = "code/hw-test/mif/dispcnt-latch.mif";
+localparam MIF_FORCE_NSEQ_ACCESS= "code/hw-test/mif/force-nseq-access.mif";
+localparam MIF_GREENSWAP        = "code/hw-test/mif/greenswap.mif";
+localparam MIF_HALTCNT          = "code/hw-test/mif/haltcnt.mif";
+localparam MIF_IRQ_DELAY        = "code/hw-test/mif/irq-delay.mif";
+localparam MIF_LATCH            = "code/hw-test/mif/latch.mif";
+localparam MIF_RAM_ACCESS_TIMING= "code/hw-test/mif/ram-access-timing.mif";
+localparam MIF_RELOAD           = "code/hw-test/mif/reload.mif";
+localparam MIF_SPRITE_HMOSAIC   = "code/hw-test/mif/sprite-hmosaic.mif";
+localparam MIF_START_DELAY      = "code/hw-test/mif/start-delay.mif";
+localparam MIF_START_STOP       = "code/hw-test/mif/start-stop.mif";
+localparam MIF_STATUS_IRQ_DMA   = "code/hw-test/mif/status-irq-dma.mif";
+localparam MIF_VRAM_MIRROR      = "code/hw-test/mif/vram-mirror.mif";
+
+parameter BIOS_INIT_FILE = "code/hw-test/mif/GBA_bios.mif";
+parameter GAMEPAK_INIT_FILE = MIF_VRAM_MIRROR;  // <-- select hw-test here
+parameter USE_ONCHIP_GAMEPAK = 1'b1;
 
 //=======================================================
 //  REG/WIRE declarations
@@ -383,8 +405,7 @@ wire [13:0] irq_request = {2'b00, ~nirq_dma3, ~nirq_dma2,
 wire        irq_pending = ime_reg[0] && |(ie_reg & if_reg);
 wire        nIRQ = !irq_pending;
 reg         nIRQ_cpu = 1'b1;
-reg         halt_irq_available = 1'b0;
-wire        halt_wake = halt_irq_available;
+wire        halt_wake = |(ie_reg & if_reg);
 
 // IF, IE, and IME settle on clock_n. Propagate their combined request for one
 // full CPU cycle before the decoder's existing nIRQ input synchronizer; HALT
@@ -455,13 +476,10 @@ always @(posedge clock_n or negedge nrst) begin
         cpu_halted <= 1'b0;
         halt_transition_wait <= 1'b0;
         halt_request_seen <= 1'b0;
-        halt_irq_available <= 1'b0;
         dma_halt_wake_wait <= 2'd0;
     end else begin
-        // IF is clocked in this domain. Register its enabled state once more
-        // before it becomes HALT-visible, matching the interrupt request
-        // synchronization without applying the IME gate used by CPU IRQ.
-        halt_irq_available <= |(ie_reg & if_reg);
+        // The wake state and registered nWAIT provide the two recovery edges
+        // after enabled IF becomes visible. IME does not gate HALT wake.
 
         if (!halt_request)
             halt_request_seen <= 1'b0;
@@ -946,6 +964,11 @@ io_registers io_registers (
     .postflg_o (postflg)
 );
 
+// LCD adapter taps on the composed PPU output (declared before the PPU instance that drives them)
+wire        lcd_ppu_valid;
+wire [14:0] lcd_ppu_pixel;
+wire        lcd_ppu_vblank;
+
 ppu ppu (
     .clock                  (clock),
     .reset                  (!nrst),
@@ -1024,13 +1047,116 @@ ppu ppu (
     .palette_read           (ppu_palette_read),
     .palette_address        (ppu_palette_address),
     .palette_read_data      (ppu_palette_read_data),
-    .output_valid           (),
-    .output_pixel           (),
+    .output_valid           (lcd_ppu_valid),
+    .output_pixel           (lcd_ppu_pixel),
     .output_hblank          (),
-    .output_vblank          (),
+    .output_vblank          (lcd_ppu_vblank),
     .tick                   (ppu_tick),
     .scanline               (ppu_scanline)
 );
+
+// ---------------------------------------------------------------------------
+// ILI9488 LCD display adapter (passive tap on the composed PPU output).
+// This only consumes the previously-open output_valid/output_pixel/output_vblank;
+// it adds NO load on GBA VRAM arbitration, DMA ownership, mem_ready, or nWAIT, so
+// GBA behaviour (and the hw-test ROMs) is unchanged. Producer side on clock_cpu
+// (17 MHz), 8080 write side on the unshifted clock_sdram (68 MHz) PLL output.
+// GPIO_0 mapping follows FPGA_LCD_INTEGRATION.md: DB[15:0]=GPIO_0[15:0],
+// CSX=[16], DCX=[17], WRX=[18], RESET=[19]. RDX is tied high externally.
+wire        lcd_csx, lcd_dcx, lcd_wrx, lcd_rst_n;
+wire        lcd_ppu_ready, lcd_frame_dropped, lcd_init_done;
+wire [15:0] lcd_db;
+
+lcd_top #(
+    .HRES (16'd480),
+    .VRES (16'd320),
+    .NBUF (32)
+) u_lcd (
+    .clk_ppu       (clock_cpu),
+    .clk_lcd       (clock_sdram),
+    .nrst          (nrst),
+    .init_en       (1'b1),
+    .ppu_pixel     (lcd_ppu_pixel),
+    .ppu_valid     (lcd_ppu_valid),
+    .ppu_vblank    (lcd_ppu_vblank),
+    .ppu_ready     (lcd_ppu_ready),       // advisory; PPU is never stalled
+    .frame_dropped (lcd_frame_dropped),
+    .lcd_csx       (lcd_csx),
+    .lcd_dcx       (lcd_dcx),
+    .lcd_wrx       (lcd_wrx),
+    .lcd_rst_n     (lcd_rst_n),
+    .lcd_db        (lcd_db),
+    .init_done     (lcd_init_done)
+);
+
+assign GPIO_0[15:0] = lcd_db;
+assign GPIO_0[16]   = lcd_csx;
+assign GPIO_0[17]   = lcd_dcx;
+assign GPIO_0[18]   = lcd_wrx;
+assign GPIO_0[19]   = lcd_rst_n;
+// GPIO_0[35:20] left unassigned (require QSF pin assignments before synthesis).
+
+// ---------------------------------------------------------------------------
+// LCD bring-up dashboard (panel disconnected). OBSERVATION ONLY: touches no LCD
+// RTL, clocking, or SDC. All indicators are latched levels or divided-counter
+// bits (raw us-wide 8080 strobes are invisible on LEDs).
+// ---------------------------------------------------------------------------
+// ~1 Hz heartbeat / blink source in the clock_sdram (68 MHz) domain.
+reg [26:0] lcd_dbg_div = 27'd0;
+always @(posedge clock_sdram or negedge nrst)
+    if (!nrst) lcd_dbg_div <= 27'd0; else lcd_dbg_div <= lcd_dbg_div + 27'd1;
+
+// Latch 8080 activity on each real write (WRX rising, CSX low), in clock_sdram.
+// lcd_wr_count counts ONLY during init -> FREEZES at 0x46 (=70) after init_done,
+// which is positive proof the initializer emitted the full sequence.
+reg        lcd_wrx_d     = 1'b1;
+reg [15:0] lcd_wr_count  = 16'd0;   // frozen at 70 after init
+reg [7:0]  lcd_last_cmd  = 8'd0;    // last COMMAND byte: 0x29 after init; 2A/2B/2C while streaming
+reg [15:0] lcd_frame_cnt = 16'd0;   // RAMWR (0x2C) count -> one per streamed frame
+reg [26:0] lcd_wr_act    = 27'd0;   // per-write free counter -> streaming-activity blink
+always @(posedge clock_sdram or negedge nrst) begin
+    if (!nrst) begin
+        lcd_wrx_d <= 1'b1; lcd_wr_count <= 16'd0; lcd_last_cmd <= 8'd0;
+        lcd_frame_cnt <= 16'd0; lcd_wr_act <= 27'd0;
+    end else begin
+        lcd_wrx_d <= lcd_wrx;
+        if (lcd_wrx && !lcd_wrx_d && !lcd_csx) begin       // one 8080 write
+            lcd_wr_act <= lcd_wr_act + 27'd1;
+            if (!lcd_dcx) begin                            // command byte (DCX=0)
+                lcd_last_cmd <= lcd_db[7:0];
+                if (lcd_db[7:0] == 8'h2C) lcd_frame_cnt <= lcd_frame_cnt + 16'd1;
+            end
+            if (!lcd_init_done) lcd_wr_count <= lcd_wr_count + 16'd1;
+        end
+    end
+end
+
+// HEX word (shown when SW[8]=1). Crossing into the seg_display (clock_cpu) domain
+// is an intentional relaxed, display-only path (values are static/slow), not a
+// metastability-critical net.
+wire [31:0] lcd_dbg_word = {8'd0, lcd_wr_count[7:0], lcd_last_cmd, lcd_frame_cnt[7:0]};
+
+// CPU debug HEX (shown when SW[8]=0), selectable with SW[7:6] for hw-test ROM bring-up:
+//   00 = PC (r15)  : HEX5 = region nibble (8=ROM, 3=IWRAM, ...), HEX4:0 = offset[19:0]
+//   01 = r0        : HEX5:0 = r0[23:0]   (result/status register many hw-test ROMs leave here)
+//   10 = CPSR      : HEX5:4 = flags[31:24] (N Z C V Q .. T), HEX1:0 = ctrl[7:0] (I F T mode)
+//   11 = addr_bus  : HEX5 = region nibble, HEX4:0 = offset[19:0]  (live bus address)
+wire [23:0] cpu_dbg_pc   = {r[15][27:24],   r[15][19:0]};
+wire [23:0] cpu_dbg_r0   =  r[0][23:0];
+wire [23:0] cpu_dbg_cpsr = {CPSR[31:24], 8'h00, CPSR[7:0]};
+wire [23:0] cpu_dbg_addr = {addr_bus[27:24], addr_bus[19:0]};
+wire [23:0] cpu_dbg_sel  = (SW[7:6] == 2'b00) ? cpu_dbg_pc   :
+                           (SW[7:6] == 2'b01) ? cpu_dbg_r0   :
+                           (SW[7:6] == 2'b10) ? cpu_dbg_cpsr :
+                                                cpu_dbg_addr;
+
+// The panel reset (lcd_rst_n) is asserted low for only ~1.5 us during init, invisible on an LED.
+// Make it observable/sticky: cleared while KEY[0] reset is held, set once the reset pulse fires.
+// So LEDR[4] goes OFF when you press reset and turns back ON once init has pulsed the panel reset.
+reg lcd_rst_seen = 1'b0;
+always @(posedge clock_sdram or negedge nrst)
+    if (!nrst)            lcd_rst_seen <= 1'b0;
+    else if (!lcd_rst_n)  lcd_rst_seen <= 1'b1;
 
 // DMA0: 0x040000BA | DMA1: 0x040000C6 | DMA2: 0x040000D2 | DMA3: 0x040000DE
 // DMA0 channel
@@ -1144,7 +1270,7 @@ dma dma3 (
 // {r[7][3:0],addr_bus[7:0], r[0][11:0]}
 // {r[0][7:0], addr_bus[27:24], addr_bus[15:0]}
 seg_display seg_display(
-    .in({8'd0, r[0][7:0], addr_bus[27:24], addr_bus[11:0]}),
+    .in(SW[8] ? lcd_dbg_word : {8'd0, cpu_dbg_sel}),
 	.clk (clock),
 
     .s0(HEX0),
@@ -1196,32 +1322,17 @@ pll  pll(
 //	.outclk (clock)  // altclkctrl_output.outclk
 //);
 
-//genvar i;
-//generate
-//	for (i = 0;i < 16 ; i = i+1) begin: reg_taps
-//		signal_tap reg_bank_tap (
-//		.acq_data_in    (r[i]),    //     tap.acq_data_in
-//		.acq_trigger_in (tap_en), //        .acq_trigger_in
-//		.acq_clk        (clock)         // acq_clk.clk
-//	);
-//	end
-//endgenerate
-//
-//signal_tap addr_tap (
-//		.acq_data_in    (addr_bus),    //     tap.acq_data_in
-//		.acq_trigger_in (tap_en), //        .acq_trigger_in
-//		.acq_clk        (clock)         // acq_clk.clk
-//);
-//
-//signal_tap din_tap (
-//		.acq_data_in    (data_bus),    //     tap.acq_data_in
-//		.acq_trigger_in (tap_en), //        .acq_trigger_in
-//		.acq_clk        (clock)         // acq_clk.clk
-//);
-
 assign nrst = KEY[0];
 assign tap_en = SW[9];
 assign LEDR[0] = clock;
 assign LEDR[1] = !(CPSR[7] || CPSR[6]);
+// LCD bring-up status LEDs (LEDR[2:0] keep their CPU-debug meaning):
+assign LEDR[3] = lcd_init_done;      // steady ON = init sequence completed
+assign LEDR[4] = lcd_rst_seen;       // sticky: OFF while KEY[0] held, ON once the ~1.5us panel-reset pulse fired
+assign LEDR[5] = lcd_frame_dropped;  // ON = FIFO overflow / frame drop
+assign LEDR[6] = lcd_ppu_ready;      // writer accepting pixels
+assign LEDR[7] = lcd_wr_act[23];     // ~1 Hz blink while 8080 writes flow (streaming active)
+assign LEDR[8] = lcd_frame_cnt[5];   // frame-rate blink (toggles every ~32 frames)
+assign LEDR[9] = lcd_dbg_div[25];    // ~1 Hz heartbeat = 68 MHz LCD clock is alive
 
 endmodule

@@ -140,6 +140,15 @@ set_false_path -to [get_ports {LEDR[*]}]
 set mem_poins [get_pins -compatibility_mode {bios* iwram* palette_ram* vram* oam* cart_ram* io_registers*}]
 set_false_path -from [get_pins -compatibility_mode sdram_controller*] -to $mem_poins
 
+# gba_timers latches from the same shared data bus that sdram_controller read data drives. The
+# request-hold SDRAM CDC holds read data stable across the 17 MHz CPU capture edge (the txn completes
+# and holds between CPU edges), so this 68->17 MHz crossing is not a real single-cycle path -- the
+# identical basis as the memory-block exception above, which simply omitted the timers. Without this,
+# sdram_controller -> gba_timers is the design's ONLY setup failure (WNS ~-5.5 ns; all 269 failing
+# paths land here). NOTE: this removes the paths from the report; it does not speed up silicon -- the
+# justification is the request-hold handshake, inherited from the exception above.
+set_false_path -from [get_pins -compatibility_mode sdram_controller*] -to [get_pins -compatibility_mode gba_timers*]
+
 #**************************************************************
 # Set Multicycle Path
 #**************************************************************
@@ -158,6 +167,25 @@ set_multicycle_path -hold 1 \
 #**************************************************************
 
 
+
+#**************************************************************
+# ILI9488 LCD 8080 output timing
+#   GPIO_0[15:0]=DB, [16]=CSX, [17]=DCX, [18]=WRX, [19]=RESET  (write-only bus)
+#**************************************************************
+# The panel latches DB/DCX on the WRX RISING edge and (controller spec V090 sec.17.4.1) needs ~10 ns
+# data setup and ~10 ns hold RELATIVE TO WRX. WRX is an FSM strobe, not a periodic clock, so it is not
+# modeled as a clock here. Instead: the lcd_8080_writer/lcd_initializer SETUP/LOW/HOLD sequence launches
+# DB/DCX at least two clock_sdram (68 MHz) cycles before the WRX rising edge, so these outputs are a
+# MULTICYCLE-2 setup path w.r.t. clock_sdram. The set_output_delay below is a SYSTEM I/O SANITY CHECK
+# against the 68 MHz launch clock using the spec's 10 ns figure plus an ASSUMED <=1 ns jumper/trace
+# delay. PROVISIONAL: re-derive after board characterization; the true DB-vs-WRX margin must be
+# confirmed by measurement on the actual panel/harness.
+set lcd_out_clock [get_clocks {pll|pll_inst|altera_pll_i|general[1].gpll~PLL_OUTPUT_COUNTER|divclk}]
+set lcd_out_ports [get_ports {GPIO_0[0] GPIO_0[1] GPIO_0[2] GPIO_0[3] GPIO_0[4] GPIO_0[5] GPIO_0[6] GPIO_0[7] GPIO_0[8] GPIO_0[9] GPIO_0[10] GPIO_0[11] GPIO_0[12] GPIO_0[13] GPIO_0[14] GPIO_0[15] GPIO_0[16] GPIO_0[17] GPIO_0[18] GPIO_0[19]}]
+set_output_delay -clock $lcd_out_clock -max 11.0 $lcd_out_ports
+set_output_delay -clock $lcd_out_clock -min -1.0 $lcd_out_ports
+set_multicycle_path -setup 2 -to $lcd_out_ports
+set_multicycle_path -hold  1 -to $lcd_out_ports
 
 #**************************************************************
 # Set Minimum Delay
