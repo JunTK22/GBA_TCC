@@ -7,6 +7,7 @@
 //      IO registers + timers -> IF/IE/IME, DMA control, WAITCNT, and HALTCNT
 //      IO register controls -> PPU -> VRAM/OAM/palette fetch ports
 //      DE1-SoC KEY[1:3] -> synchronized GBA KEYINPUT A/B/Start bits
+//      GPIO_1[35:32] -> debounced GBA KEYINPUT Up/Left/Right/Down bits
 //
 //  The CPU, DMA engines, and PPU use the 17 MHz PLL `clock_cpu` output. Local
 //  memories, the IO register file, and the SDRAM host wrapper use the dedicated
@@ -124,7 +125,7 @@ localparam MIF_STATUS_IRQ_DMA   = "code/hw-test/mif/status-irq-dma.mif";
 localparam MIF_VRAM_MIRROR      = "code/hw-test/mif/vram-mirror.mif";
 
 parameter BIOS_INIT_FILE = "code/hw-test/mif/GBA_bios.mif";
-parameter GAMEPAK_INIT_FILE = MIF_VRAM_MIRROR;  // <-- select hw-test here
+parameter GAMEPAK_INIT_FILE = MIF_RAM_ACCESS_TIMING;  // <-- select hw-test here
 parameter USE_ONCHIP_GAMEPAK = 1'b1;
 
 //=======================================================
@@ -167,8 +168,40 @@ always @(posedge clock_n or negedge nrst) begin
     end
 end
 
-// KEYINPUT bits: 0=A, 1=B, 3=Start. All other buttons remain released.
-wire [15:0] keypad_input = {6'b000000, 6'b111111,
+// D-pad on GPIO_1[35:32] = {Up, Left, Right, Down}: external push-buttons to
+// GND with the FPGA weak pull-ups (QSF), so active-low like KEY. They are not
+// debounced on the board: after the two synchronizer stages, a new state is
+// accepted only once it has been stable for 2^16 clock_n cycles (~3.9 ms).
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS; -name DONT_MERGE_REGISTER ON; -name PRESERVE_REGISTER ON"} *)
+reg [3:0] dpad_meta_n;
+(* altera_attribute = {"-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS; -name DONT_MERGE_REGISTER ON; -name PRESERVE_REGISTER ON"} *)
+reg [3:0] dpad_sync_n;
+reg [3:0] dpad_n;
+reg [15:0] dpad_stable_count;
+
+always @(posedge clock_n or negedge nrst) begin
+    if (!nrst) begin
+        dpad_meta_n <= 4'b1111;
+        dpad_sync_n <= 4'b1111;
+        dpad_n <= 4'b1111;
+        dpad_stable_count <= 16'd0;
+    end else begin
+        dpad_meta_n <= GPIO_1[35:32];
+        dpad_sync_n <= dpad_meta_n;
+        if (dpad_sync_n == dpad_n)
+            dpad_stable_count <= 16'd0;
+        else if (&dpad_stable_count) begin
+            dpad_n <= dpad_sync_n;
+            dpad_stable_count <= 16'd0;
+        end else
+            dpad_stable_count <= dpad_stable_count + 16'd1;
+    end
+end
+
+// KEYINPUT bits: 0=A, 1=B, 3=Start, 4=Right, 5=Left, 6=Up, 7=Down.
+// Select and the shoulder buttons remain released.
+wire [15:0] keypad_input = {6'b000000, 2'b11,
+                            dpad_n[0], dpad_n[3], dpad_n[2], dpad_n[1],
                             keypad_sync_n[2], 1'b1,
                             keypad_sync_n[1:0]};
 
@@ -1114,10 +1147,18 @@ reg [15:0] lcd_wr_count  = 16'd0;   // frozen at 70 after init
 reg [7:0]  lcd_last_cmd  = 8'd0;    // last COMMAND byte: 0x29 after init; 2A/2B/2C while streaming
 reg [15:0] lcd_frame_cnt = 16'd0;   // RAMWR (0x2C) count -> one per streamed frame
 reg [26:0] lcd_wr_act    = 27'd0;   // per-write free counter -> streaming-activity blink
+// Panel-side stream integrity: pixel strobes (DCX=1) between RAMWR (0x2C) and the next
+// frame's CASET (0x2A) must be exactly 480*320 = 153600 per streamed frame.
+reg [17:0] lcd_panel_pix      = 18'd0;
+reg [17:0] lcd_last_panel_pix = 18'd0;
+reg [7:0]  lcd_bad_panel_frames = 8'd0;
+reg        lcd_panel_armed    = 1'b0;
 always @(posedge clock_sdram or negedge nrst) begin
     if (!nrst) begin
         lcd_wrx_d <= 1'b1; lcd_wr_count <= 16'd0; lcd_last_cmd <= 8'd0;
         lcd_frame_cnt <= 16'd0; lcd_wr_act <= 27'd0;
+        lcd_panel_pix <= 18'd0; lcd_last_panel_pix <= 18'd0;
+        lcd_bad_panel_frames <= 8'd0; lcd_panel_armed <= 1'b0;
     end else begin
         lcd_wrx_d <= lcd_wrx;
         if (lcd_wrx && !lcd_wrx_d && !lcd_csx) begin       // one 8080 write
@@ -1125,8 +1166,72 @@ always @(posedge clock_sdram or negedge nrst) begin
             if (!lcd_dcx) begin                            // command byte (DCX=0)
                 lcd_last_cmd <= lcd_db[7:0];
                 if (lcd_db[7:0] == 8'h2C) lcd_frame_cnt <= lcd_frame_cnt + 16'd1;
+                if ((lcd_db[7:0] == 8'h2A) && lcd_panel_armed) begin
+                    lcd_last_panel_pix <= lcd_panel_pix;
+                    if ((lcd_panel_pix != 18'd153600) && (lcd_bad_panel_frames != 8'hff))
+                        lcd_bad_panel_frames <= lcd_bad_panel_frames + 8'd1;
+                end
+                if ((lcd_db[7:0] == 8'h2C) && lcd_init_done) begin
+                    lcd_panel_pix   <= 18'd0;
+                    lcd_panel_armed <= 1'b1;
+                end
+            end else begin
+                lcd_panel_pix <= lcd_panel_pix + 18'd1;
             end
             if (!lcd_init_done) lcd_wr_count <= lcd_wr_count + 16'd1;
+        end
+    end
+end
+
+// Source-side stream integrity on clock_cpu: every visible scanline must deliver exactly 240
+// PPU output pixels and every frame 38400; also count LCD FIFO frame drops. Sticky until reset.
+reg [7:0]  lcd_line_q          = 8'd0;
+reg        lcd_vbl_q           = 1'b1;
+reg        lcd_src_seen        = 1'b0;
+reg [8:0]  lcd_line_pix        = 9'd0;
+reg [15:0] lcd_src_pix         = 16'd0;
+reg [15:0] lcd_last_src_pix    = 16'd0;
+reg [7:0]  lcd_bad_src_frames  = 8'd0;
+reg [7:0]  lcd_bad_lines       = 8'd0;
+reg [7:0]  lcd_bad_line_num    = 8'd0;
+reg [8:0]  lcd_bad_line_pix    = 9'd0;
+reg        lcd_drop_q          = 1'b0;
+reg [7:0]  lcd_drops           = 8'd0;
+always @(posedge clock_cpu or negedge nrst) begin
+    if (!nrst) begin
+        lcd_line_q <= 8'd0; lcd_vbl_q <= 1'b1; lcd_src_seen <= 1'b0;
+        lcd_line_pix <= 9'd0; lcd_src_pix <= 16'd0; lcd_last_src_pix <= 16'd0;
+        lcd_bad_src_frames <= 8'd0; lcd_bad_lines <= 8'd0;
+        lcd_bad_line_num <= 8'd0; lcd_bad_line_pix <= 9'd0;
+        lcd_drop_q <= 1'b0; lcd_drops <= 8'd0;
+    end else begin
+        lcd_line_q <= ppu_scanline;
+        lcd_vbl_q  <= lcd_ppu_vblank;
+        lcd_drop_q <= lcd_frame_dropped;
+        if (lcd_frame_dropped && !lcd_drop_q && (lcd_drops != 8'hff))
+            lcd_drops <= lcd_drops + 8'd1;
+
+        if (ppu_scanline != lcd_line_q) begin              // scanline boundary
+            if (lcd_src_seen && (lcd_line_q < 8'd160) && (lcd_line_pix != 9'd240)) begin
+                if (lcd_bad_lines != 8'hff) lcd_bad_lines <= lcd_bad_lines + 8'd1;
+                lcd_bad_line_num <= lcd_line_q;
+                lcd_bad_line_pix <= lcd_line_pix;
+            end
+            lcd_line_pix <= {8'd0, lcd_ppu_valid};
+        end else if (lcd_ppu_valid) begin
+            lcd_line_pix <= lcd_line_pix + 9'd1;
+        end
+
+        if (lcd_vbl_q && !lcd_ppu_vblank) begin            // source frame boundary
+            if (lcd_src_seen) begin
+                lcd_last_src_pix <= lcd_src_pix;
+                if ((lcd_src_pix != 16'd38400) && (lcd_bad_src_frames != 8'hff))
+                    lcd_bad_src_frames <= lcd_bad_src_frames + 8'd1;
+            end
+            lcd_src_seen <= 1'b1;
+            lcd_src_pix  <= {15'd0, lcd_ppu_valid};
+        end else if (lcd_ppu_valid) begin
+            lcd_src_pix <= lcd_src_pix + 16'd1;
         end
     end
 end
@@ -1134,7 +1239,17 @@ end
 // HEX word (shown when SW[8]=1). Crossing into the seg_display (clock_cpu) domain
 // is an intentional relaxed, display-only path (values are static/slow), not a
 // metastability-critical net.
-wire [31:0] lcd_dbg_word = {8'd0, lcd_wr_count[7:0], lcd_last_cmd, lcd_frame_cnt[7:0]};
+// SW[7:6] selects the LCD view (healthy values in parentheses):
+//   00 = {bad source frames, last source-frame pixel count}          (00 9600 = 38400)
+//   01 = {bad scanlines, last bad line number, its pixel count[7:0]} (00 00 00)
+//   10 = {bad panel frames, last panel-frame strobe count[15:0]}     (00 5800 = 153600 low bits)
+//   11 = {FIFO frame drops, last command byte, RAMWR count[7:0]}
+wire [23:0] lcd_dbg_sel =
+    (SW[7:6] == 2'b00) ? {lcd_bad_src_frames, lcd_last_src_pix} :
+    (SW[7:6] == 2'b01) ? {lcd_bad_lines, lcd_bad_line_num, lcd_bad_line_pix[7:0]} :
+    (SW[7:6] == 2'b10) ? {lcd_bad_panel_frames, lcd_last_panel_pix[15:0]} :
+                         {lcd_drops, lcd_last_cmd, lcd_frame_cnt[7:0]};
+wire [31:0] lcd_dbg_word = {8'd0, lcd_dbg_sel};
 
 // CPU debug HEX (shown when SW[8]=0), selectable with SW[7:6] for hw-test ROM bring-up:
 //   00 = PC (r15)  : HEX5 = region nibble (8=ROM, 3=IWRAM, ...), HEX4:0 = offset[19:0]
