@@ -148,6 +148,7 @@ module arm7tdmi_top (
     wire        load_f;
     wire        pc_lr_f;
 
+    localparam [5:0] THUMB_HI_OP       = 6'd20;
     localparam [5:0] THUMB_PC_REL_LOAD = 6'd21;
     localparam [5:0] THUMB_PUSH_POP    = 6'd29;
 
@@ -162,6 +163,8 @@ module arm7tdmi_top (
                                   : {Alu_bus[31:2], 2'b00})
                                : ((Inst_decoded == THUMB_PUSH_POP) &&
                                   load_f && pc_lr_f)
+                               ? {Alu_bus[31:1], 1'b0}
+                               : (Inst_decoded == THUMB_HI_OP)
                                ? {Alu_bus[31:1], 1'b0}
                                : (Inst_decoded == THUMB_PC_REL_LOAD)
                                ? {Alu_bus[31:2], 2'b00}

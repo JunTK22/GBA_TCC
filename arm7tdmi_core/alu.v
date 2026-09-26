@@ -101,17 +101,17 @@ module alu (
                 effective_b   = op_b;
                 adder_cin     = cpsr_c;
             end
-            4'b0110: begin // SBC   op_a - op_b - ~C
+            4'b0110: begin // SBC   op_a - op_b - ~C = op_a + ~op_b + C
                 is_arithmetic = 1'b1;
                 effective_a   = op_a;
-                effective_b   = ~op_b + 32'b1;
-                adder_cin     = cpsr_c - 1'b1;
+                effective_b   = ~op_b;
+                adder_cin     = cpsr_c;
             end
-            4'b0111: begin // RSC   op_b - op_a - ~C
+            4'b0111: begin // RSC   op_b - op_a - ~C = ~op_a + op_b + C
                 is_arithmetic = 1'b1;
-                effective_a   = ~op_a + 32'b1;
+                effective_a   = ~op_a;
                 effective_b   = op_b;
-                adder_cin     = cpsr_c - 1'b1;
+                adder_cin     = cpsr_c;
             end
             4'b1010: begin // CMP (SUB, flags only)
                 is_arithmetic = 1'b1;
@@ -140,9 +140,9 @@ module alu (
 
         // V flag (signed overflow) only for arithmetic ops
         // Formula works for all unified-add cases (including ADC/SBC and cin):
-        // V = (op_a[31] == effective_b[31]) && (result[31] != op_a[31])
+        // V = (effective_a[31] == effective_b[31]) && (result[31] != effective_a[31])
         if (is_arithmetic) begin
-            v = (op_a[31] == effective_b[31]) && (result[31] != op_a[31]);
+            v = (effective_a[31] == effective_b[31]) && (result[31] != effective_a[31]);
         end
         // For logical ops: V is unchanged by ALU (control logic in CPSR update
         // will preserve old V). We drive v=0 here as a safe default.

@@ -299,12 +299,16 @@ wire load_opcode_prefetch =
     (normal_block_load && wait_f);
 wire single_pc_prefetch = single_pc_load && (cycle_count == 5'b11111);
 
+// Thumb hi-register ADD/MOV with Rd = PC branches like BX, staying in Thumb.
+wire thumb_hi_pc_write = !instruct_dec[8] && instruct_dec[7] &&
+                         (instruct_dec[2:0] == 3'b111);
+
 wire three_cycle_refill =
     ((Inst_decoded_o == DP) && (instruct_dec[15:12] == 4'b1111)) ||
     (Inst_decoded_o == BranchX) ||
     (Inst_decoded_o == Branch) ||
     ((Inst_decoded_o == Hi_op_BranchX) &&
-     (instruct_dec[9:8] == 2'b11)) ||
+     ((instruct_dec[9:8] == 2'b11) || thumb_hi_pc_write)) ||
     (Inst_decoded_o == Cond_Branch) ||
     (Inst_decoded_o == Uncon_Branch) ||
     ((Inst_decoded_o == L_Branch_Link) && instruct_dec[11]) ||
@@ -1117,7 +1121,10 @@ always @(posedge CLK) begin
 							opcode_o <= TST;
 							Reg_bank_en <= 0;
 						end
-						4'd9: opcode_o <= RSB;
+						4'd9: begin // NEG Rd, Rs = RSB Rd, Rs, #0
+							opcode_o  <= RSB;
+							Bus_B_sel <= Immediate; // Imm_o defaults to 0
+						end
 						4'd10: begin
 							opcode_o <= CMP;
 							Reg_bank_en <= 0;
@@ -1145,7 +1152,7 @@ always @(posedge CLK) begin
 					PSR_wr_en		<= !thumb_register_shift_decode;
 
 					Rd_o			<= instruct_reg[2:0];
-					Rn_o			<= instruct_reg[2:0];
+					Rn_o			<= (instruct_reg[9:6] == 4'd9) ? instruct_reg[5:3] : instruct_reg[2:0];
 					Rm_o			<= ((instruct_reg[9:6] == 4'd2) ||
 									(instruct_reg[9:6] == 4'd3) ||
 									(instruct_reg[9:6] == 4'd4) ||
@@ -1164,6 +1171,11 @@ always @(posedge CLK) begin
 						2'b00: begin
 							opcode_o <= ADD;
 							Reg_bank_en <= 1;
+							if (instruct_reg[7] && (instruct_reg[2:0] == 3'b111)) begin
+								cycle_count 	<= 3'b111;
+								cycles_types	<= {S,S,N};
+								Addr_reg_sel	<= ALU_bus;
+							end
 						end
 						2'b01: begin
 							set_condition_f <= 1;
@@ -1173,6 +1185,11 @@ always @(posedge CLK) begin
 						2'b10: begin
 							opcode_o <= MOV;
 							Reg_bank_en <= 1;
+							if (instruct_reg[7] && (instruct_reg[2:0] == 3'b111)) begin
+								cycle_count 	<= 3'b111;
+								cycles_types	<= {S,S,N};
+								Addr_reg_sel	<= ALU_bus;
+							end
 						end
 						2'b11: begin							
 							cycle_count 	<= 3'b111;
@@ -1694,7 +1711,8 @@ always @(posedge CLK) begin
 				Reg_bank_en		<= 0;
 				set_thumb_bit	<= 0;
 				Addr_reg_sel 	<= Incrementer_bus;
-				MAS				<= bx_target_thumb ? 2'b01 : 2'b10;
+				// Only BX may leave Thumb; ADD/MOV to PC keep halfword refills.
+				MAS				<= (thumb_hi_pc_write || bx_target_thumb) ? 2'b01 : 2'b10;
 			end
 			Pc_r_L: begin
 				MAS <= 2'b10;
